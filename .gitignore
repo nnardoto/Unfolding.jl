@@ -1,0 +1,8 @@
+/Manifest.toml
+.DS_Store
+/examples/graphene/models/
+/examples/graphene/output/
+/examples/graphene/cp2k/run/
+*.csr
+*.out
+*.bak-*
