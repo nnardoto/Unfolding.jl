@@ -1,8 +1,27 @@
-/Manifest.toml
+# Julia
+Manifest.toml
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+deps/deps.jl
+deps/build.log
+
+# Editores / SO
 .DS_Store
+.vscode/
+.idea/
+
+# Saída dos exemplos (gerada por generate_hdf5.jl / export_unfolding.jl / plotting)
 /examples/graphene/models/
 /examples/graphene/output/
 /examples/graphene/cp2k/run/
+
+# Saída bruta do CP2K (arquivos CSR são entrada temporária do conversor, não commitados)
 *.csr
 *.out
 *.bak-*
+
+# Python (examples/graphene/plotting/plot_matplotlib.py)
+__pycache__/
+*.pyc
+.venv/
