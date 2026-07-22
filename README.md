@@ -144,6 +144,21 @@ result = unfold_bandstructure(
 write_unfolded_hdf5("outputs/Franqueite-unfolded.h5", result)
 ```
 
+### Paralelização do caminho k
+
+`solve_bands` e `unfold_bandstructure` distribuem automaticamente os pontos
+k entre as threads disponíveis. Para usar todos os núcleos, inicie Julia com
+múltiplas threads e mantenha o BLAS em uma thread, evitando duas camadas de
+paralelismo competindo pelos mesmos núcleos:
+
+```sh
+OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. seu_script.jl
+```
+
+A ordem dos pontos no resultado é a mesma do caminho de entrada. Para forçar
+o comportamento serial, use `parallel=false` em qualquer uma das duas
+funções. `Threads.nthreads()` mostra quantas threads Julia estão disponíveis.
+
 O arquivo final contém pontos k, energias, pesos espectrais e rótulos. Seu
 schema está documentado em
 [`docs/unfolded-hdf5-schema.md`](docs/unfolded-hdf5-schema.md).

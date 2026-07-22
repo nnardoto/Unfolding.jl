@@ -230,6 +230,22 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
         @test result.energies[:, 1] ≈ bands.energies[1]
         @test result.weights[:, 1] ≈ W[key]
 
+        serial = unfold_bandstructure(pc.lattice, sc, path, 2;
+            rng=MersenneTwister(7), parallel=false)
+        threaded = unfold_bandstructure(pc.lattice, sc, path, 2;
+            rng=MersenneTwister(7), parallel=true)
+        @test threaded.kpoints_frac == serial.kpoints_frac
+        @test threaded.distance == serial.distance
+        @test threaded.energies ≈ serial.energies
+        @test threaded.weights ≈ serial.weights atol=1e-10
+
+        Kpoints = [[0.07, 0.11, 0.0], [0.21, 0.09, 0.0], [0.31, 0.27, 0.0]]
+        serial_bands = solve_bands(sc, Kpoints; parallel=false)
+        threaded_bands = solve_bands(sc, Kpoints; parallel=true)
+        @test threaded_bands.kpoints_frac == serial_bands.kpoints_frac
+        @test threaded_bands.energies ≈ serial_bands.energies
+        @test threaded_bands.overlaps ≈ serial_bands.overlaps
+
         # unfold_bandstructure(M, sc, ...) must reproduce exactly the
         # pc_lattice-based call: M = round.(Int, pc.lattice \ sc.lattice) is
         # exactly diagm([2, 2, 1]) for this 2x2 graphene supercell.

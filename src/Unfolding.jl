@@ -113,7 +113,8 @@ end
 
 """
     unfold_bandstructure(pc_lattice, sc::RealSpaceModel, path, n_per_segment;
-                        tick_labels=nothing, spin=1, tol=1e-5, rng=Random.default_rng())
+                        tick_labels=nothing, spin=1, tol=1e-5,
+                        rng=Random.default_rng(), parallel=Threads.nthreads() > 1)
 
 Camada de conveniência para o caso de uso mais comum: dada a rede da célula
 de referência (`pc_lattice`) e uma supercélula já carregada (`sc`), resolve
@@ -135,6 +136,10 @@ Lança um erro cedo se `sc.lattice` não for um múltiplo inteiro de
 `pc_lattice`, em vez de deixar o mapeamento atômico falhar mais adiante com
 uma mensagem menos direta.
 
+Com `parallel=true`, tanto a solução das bandas quanto o unfolding são
+distribuídos por ponto k entre as threads Julia. A ordem do caminho e do
+resultado permanece inalterada.
+
 Retorna uma `UnfoldedBandStructure`.
 """
 function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
@@ -144,7 +149,8 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
                               tick_labels::Union{Nothing,Vector{<:AbstractString}}=nothing,
                               spin::Int=1,
                               tol::Real=1e-5,
-                              rng::AbstractRNG=Random.default_rng())
+                              rng::AbstractRNG=Random.default_rng(),
+                              parallel::Bool=Threads.nthreads() > 1)
     kpc, distance, ticks = interpolate_kpath(path, n_per_segment)
     labels = tick_labels === nothing ? fill("", length(ticks)) : String.(collect(tick_labels))
     length(labels) == length(ticks) || throw(DimensionMismatch("tick_labels/ticks count mismatch"))
@@ -161,19 +167,35 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
     kpoints_frac = zeros(Float64, 3, nk)
     energies = zeros(Float64, nb, nk)
     weights = zeros(Float64, nb, nk)
+    Ksc = [mod.(transform' * k .+ 0.5, 1.0) .- 0.5 for k in kpc]
+    bands = solve_bands(sc, Ksc; spin=spin, parallel=parallel)
 
-    for (i, k) in enumerate(kpc)
-        Ksc = mod.(transform' * k .+ 0.5, 1.0) .- 0.5
-        bands = solve_bands(sc, [Ksc]; spin=spin)
-        W, _, _ = unfold_supercell(pcl, ab, sc.lattice, Ksc, bands.overlaps[1], bands.coefficients[1];
-            tol=tol, rng=rng)
+    function unfold_one!(i, point_rng)
+        k = kpc[i]
+        W, _, _ = unfold_supercell(pcl, ab, sc.lattice, Ksc[i], bands.overlaps[i], bands.coefficients[i];
+            tol=tol, rng=point_rng)
         # Um ponto K da SC se desdobra em det(M) pontos k da PC. Mantém o
         # membro que está sobre o caminho de referência pedido.
         target = argmin([norm(periodic_frac_distance(key, k)) for key in keys(W)])
         key = collect(keys(W))[target]
         kpoints_frac[:, i] = k
-        energies[:, i] = bands.energies[1]
+        energies[:, i] = bands.energies[i]
         weights[:, i] = W[key]
+        return nothing
+    end
+
+    if parallel && nk > 1
+        # Um RNG separado por ponto evita compartilhar estado mutável entre
+        # threads. As sementes são geradas em ordem, antes do trabalho
+        # paralelo, mantendo a execução reprodutível para um `rng` explícito.
+        point_rngs = [MersenneTwister(rand(rng, UInt64)) for _ in 1:nk]
+        Threads.@threads :dynamic for i in eachindex(kpc)
+            unfold_one!(i, point_rngs[i])
+        end
+    else
+        for i in eachindex(kpc)
+            unfold_one!(i, rng)
+        end
     end
 
     UnfoldedBandStructure(kpoints_frac, distance, ticks, labels, energies, weights, sc.energy_unit)

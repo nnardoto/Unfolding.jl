@@ -44,7 +44,8 @@ hamiltonian_at_k(model::RealSpaceModel, k; spin=1) = fourier_matrix(model.H[spin
 overlap_at_k(model::RealSpaceModel, k) = fourier_matrix(model.S, model.R, k)
 
 """
-    solve_bands(model, kpoints; spin=1, validate=true, atol=1e-8)
+    solve_bands(model, kpoints; spin=1, validate=true, atol=1e-8,
+                parallel=Threads.nthreads() > 1)
 
 Resolve `H(k)C = S(k)CE` (Eq. 18 do artigo) em cada ponto `k` fracionário
 fornecido. Os autovetores retornados são normalizados na métrica não-
@@ -53,12 +54,21 @@ ortogonal dos AOs.
 Com `validate=true`, a rotina confere a hermiticidade das matrizes antes de
 confiar na versão simetrizada, e verifica a normalização `C†SC=I` exigida
 pelo artigo.
+
+Os pontos k são independentes. Com `parallel=true`, eles são distribuídos
+entre as threads Julia, sem alterar a ordem das entradas no `BandData`.
 """
-function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol=1e-8)
+function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol=1e-8,
+                     parallel=Threads.nthreads() > 1)
     1 <= spin <= nspin(model) || throw(ArgumentError("invalid spin channel"))
     ks = [Vector{Float64}(k) for k in kpoints]
-    energies = Vector{Float64}[]; coefficients = Matrix{ComplexF64}[]; overlaps = Matrix{ComplexF64}[]
-    for (ik, k) in enumerate(ks)
+    nk = length(ks)
+    energies = Vector{Vector{Float64}}(undef, nk)
+    coefficients = Vector{Matrix{ComplexF64}}(undef, nk)
+    overlaps = Vector{Matrix{ComplexF64}}(undef, nk)
+
+    function solve_one!(ik)
+        k = ks[ik]
         length(k) == 3 || error("k-point $ik does not have three components")
         Hraw = hamiltonian_at_k(model, k; spin=spin)
         Sraw = overlap_at_k(model, k)
@@ -72,13 +82,24 @@ function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol
         # Löwdin usada mais adiante.
         minimum(eigvals(Hermitian(Sk))) > 0 || error("S(k) is not positive definite at k-point $ik")
         sol = eigen(Hermitian(Hk), Hermitian(Sk))
-        push!(energies, Vector{Float64}(sol.values))
-        push!(coefficients, Matrix{ComplexF64}(sol.vectors))
-        push!(overlaps, Matrix{ComplexF64}(Sk))
+        energies[ik] = Vector{Float64}(sol.values)
+        coefficients[ik] = Matrix{ComplexF64}(sol.vectors)
+        overlaps[ik] = Matrix{ComplexF64}(Sk)
         if validate
             norm(Hraw-Hraw', Inf) <= atol*max(norm(Hraw,Inf),1) || error("non-Hermitian H(k) at $ik")
             norm(Sraw-Sraw', Inf) <= atol*max(norm(Sraw,Inf),1) || error("non-Hermitian S(k) at $ik")
             norm(sol.vectors' * Sk * sol.vectors - I, Inf) <= 10atol || error("C†SC != I at $ik")
+        end
+        return nothing
+    end
+
+    if parallel && nk > 1
+        Threads.@threads :dynamic for ik in eachindex(ks)
+            solve_one!(ik)
+        end
+    else
+        for ik in eachindex(ks)
+            solve_one!(ik)
         end
     end
     BandData(ks, energies, coefficients, overlaps, model.energy_unit)
