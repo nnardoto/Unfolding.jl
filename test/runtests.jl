@@ -154,6 +154,17 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
         key = collect(keys(W))[argmin([norm(periodic_frac_distance(q, k)) for q in keys(W)])]
         @test result.energies[:, 1] ≈ bands.energies[1]
         @test result.weights[:, 1] ≈ W[key]
+
+        # unfold_bandstructure(M, sc, ...) must reproduce exactly the
+        # pc_lattice-based call: M = round.(Int, pc.lattice \ sc.lattice) is
+        # exactly diagm([2, 2, 1]) for this 2x2 graphene supercell.
+        M = round.(Int, pc.lattice \ sc.lattice)
+        result_M = unfold_bandstructure(M, sc, path, 2; rng=MersenneTwister(7))
+        @test result_M.energies ≈ result.energies
+        @test result_M.weights ≈ result.weights
+        @test result_M.kpoints_frac == result.kpoints_frac
+
+        @test_throws ErrorException unfold_bandstructure(zeros(Int, 3, 3), sc, path, 2)
     end
 
     @testset "2x2 pristine unfolding" begin

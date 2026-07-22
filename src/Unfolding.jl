@@ -180,6 +180,34 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
 end
 
 """
+    unfold_bandstructure(M::AbstractMatrix{<:Integer}, sc::RealSpaceModel, path, n_per_segment; kwargs...)
+
+Mesmo método acima, mas recebendo a matriz de transformação inteira `M`
+(`A_sc = A_pc * M`, Eq. 1 do artigo) em vez dos vetores de rede da célula de
+referência. A rede de referência é recuperada exatamente por
+`pc_lattice = sc.lattice * inv(M)`, útil quando você já conhece `M` (por
+exemplo `[2 0 0; 0 2 0; 0 0 1]` para uma supercélula 2×2×1) e não quer
+manter os vetores de rede da PC à parte só para chamar esta função.
+
+Como `M` e `pc_lattice` (o método com vetores de rede, em unidades de
+comprimento) têm significados físicos completamente diferentes, o
+despacho múltiplo aqui é seguro apenas porque os dois têm tipo de elemento
+diferente: `M` deve ser uma matriz de inteiros. Se você passar a matriz
+errada (por exemplo `M` convertida para `Float64`), a checagem de
+consistência já existente no outro método -- de que a rede da supercélula é
+um múltiplo inteiro da rede de referência recebida -- captura o erro cedo
+em vez de produzir um resultado fisicamente sem sentido.
+"""
+function unfold_bandstructure(M::AbstractMatrix{<:Integer}, sc::RealSpaceModel,
+                              path::Vector{<:AbstractVector}, n_per_segment::Int; kwargs...)
+    size(M) == (3, 3) || throw(DimensionMismatch("M must be 3x3"))
+    Mf = Matrix{Float64}(M)
+    abs(det(Mf)) > eps(Float64) || error("unfold_bandstructure: M must be invertible (det(M) != 0)")
+    pc_lattice = sc.lattice * inv(Mf)
+    unfold_bandstructure(pc_lattice, sc, path, n_per_segment; kwargs...)
+end
+
+"""
     write_unfolded_hdf5(path, result::UnfoldedBandStructure; reference_energies=nothing)
 
 Grava um `UnfoldedBandStructure` diretamente, sem que o usuário precise

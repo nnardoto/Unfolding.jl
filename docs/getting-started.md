@@ -61,6 +61,28 @@ labels = ["Γ", "K", "M", "Γ"]
 result = unfold_bandstructure(pc.lattice, sc, path, 61; tick_labels=labels)
 ```
 
+Note que aqui não precisamos ter calculado eletronicamente a célula
+primitiva -- `unfold_bandstructure` só usa `pc.lattice`, os vetores de rede
+(geometria pura). O único lugar onde o cálculo eletrônico da PC entra é no
+passo 4 abaixo, e só se você quiser a banda de referência para comparação
+visual.
+
+Se você já conhece a matriz de transformação inteira `M` (`A_sc = A_pc*M`,
+por exemplo `M = [2 0 0; 0 2 0; 0 0 1]` para uma supercélula 2×2×1) e não
+quer manter os vetores de rede da PC à parte, existe uma variante que
+recebe `M` diretamente:
+
+```julia
+result = unfold_bandstructure([2 0 0; 0 2 0; 0 0 1], sc, path, 61; tick_labels=labels)
+```
+
+Os dois métodos dão exatamente o mesmo resultado; `pc_lattice` é
+recuperado internamente por `sc.lattice * inv(M)`. A distinção de tipo (`M`
+precisa ser uma matriz de inteiros) evita confundir os dois -- e mesmo que
+você troque um pelo outro por engano, a checagem interna de que a rede da
+supercélula é um múltiplo inteiro da rede recebida barra o erro cedo, em
+vez de desdobrar silenciosamente com a física errada.
+
 `unfold_bandstructure` resolve as bandas da supercélula e as desdobra em
 cada ponto do caminho, cuidando de todo o mapeamento geométrico entre PC e
 SC (veja a docstring da função para os detalhes). Ela lança um erro cedo se
