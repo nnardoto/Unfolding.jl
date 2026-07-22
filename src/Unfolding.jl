@@ -36,7 +36,7 @@ export AtomBasis, natoms, translation_operator, translation_operators, periodic_
 export joint_eigen, check_joint_eigen, kfrac_from_lambdas, group_by_kfrac
 export hermitian_sqrt, lowdin_transform, unfold_weights, check_sum_rule_over_k
 export spectral_function, write_unfolded_hdf5, read_unfolded_hdf5, unfold_supercell
-export read_cp2k_csr, convert_cp2k_to_hdf5
+export CP2KFiles, read_cp2k_csr, convert_cp2k_to_hdf5
 export UnfoldedBandStructure, unfold_bandstructure
 
 """
@@ -205,6 +205,22 @@ function unfold_bandstructure(M::AbstractMatrix{<:Integer}, sc::RealSpaceModel,
     abs(det(Mf)) > eps(Float64) || error("unfold_bandstructure: M must be invertible (det(M) != 0)")
     pc_lattice = sc.lattice * inv(Mf)
     unfold_bandstructure(pc_lattice, sc, path, n_per_segment; kwargs...)
+end
+
+"""
+    unfold_bandstructure(M, files::CP2KFiles, path, n_per_segment; kwargs...)
+
+Atalho de ponta a ponta para um cálculo CP2K real. Importa o modelo a partir
+dos quatro caminhos em `files` e executa o unfolding usando somente a matriz
+de transformação inteira `M`, sem transcrição manual de geometria ou base.
+"""
+function unfold_bandstructure(M::AbstractMatrix{<:Integer}, files::CP2KFiles,
+                              path::Vector{<:AbstractVector}, n_per_segment::Int;
+                              spins=[1], validate=true, kwargs...)
+    length(spins) == 1 ||
+        error("unfold_bandstructure(files): select exactly one spin channel")
+    sc = read_cp2k_csr(files; spins=spins, validate=validate)
+    unfold_bandstructure(M, sc, path, n_per_segment; spin=1, kwargs...)
 end
 
 """

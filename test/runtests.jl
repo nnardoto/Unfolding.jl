@@ -34,6 +34,22 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
             Sp=sparse([0.01 0.002; -0.003 0.005]); Sm=sparse(Matrix(Sp'))
             output=joinpath(dir,"cp2k.out")
             open(output,"w") do io
+                println(io," CELL| Volume [angstrom^3]:                                  128.000000")
+                println(io," CELL| Vector a [angstrom]:       2.000     0.000     0.000   |a| =     2.000000")
+                println(io," CELL| Vector b [angstrom]:       0.000     8.000     0.000   |b| =     8.000000")
+                println(io," CELL| Vector c [angstrom]:       0.000     0.000     8.000   |c| =     8.000000")
+                println(io," CELL| Angle (b,c), alpha [degree]:                              90.000000")
+                println(io," CELL| Angle (a,c), beta  [degree]:                              90.000000")
+                println(io," CELL| Angle (a,b), gamma [degree]:                              90.000000")
+                println(io," ATOMIC KIND INFORMATION")
+                println(io,"  1. Atomic kind: H                                  Number of atoms:       2")
+                println(io,"      Orbital Basis Set                     TEST-BASIS")
+                println(io,"        Number of spherical basis functions:              1")
+                println(io," MODULE QUICKSTEP: ATOMIC COORDINATES IN ANGSTROM")
+                println(io,"    Atom Kind Element             X             Y             Z      Z(eff)      Mass")
+                println(io,"      1    1 H   1      0.000000      0.000000      0.000000   1.0000   1.0000")
+                println(io,"      2    1 H   1      1.000000      0.000000      0.000000   1.0000   1.0000")
+                println(io)
                 println(io," *** SCF run converged in 3 steps ***")
                 for label in ("KS","S")
                     println(io," $label CSR write|   3 periodic images")
@@ -56,6 +72,13 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
             for (i,A) in enumerate((S0,Sm,Sp))
                 write_csr(joinpath(dir,"ovl-S_SPIN_1_R_$(i)-1_0.csr"),A)
             end
+            # Layout normal do CP2K: KS e S compartilham o mesmo prefixo.
+            for i in 1:3
+                cp(joinpath(dir,"ham-KS_SPIN_1_R_$(i)-1_0.csr"),
+                   joinpath(dir,"calc-KS_SPIN_1_R_$(i)-1_0.csr"))
+                cp(joinpath(dir,"ovl-S_SPIN_1_R_$(i)-1_0.csr"),
+                   joinpath(dir,"calc-S_SPIN_1_R_$(i)-1_0.csr"))
+            end
             lattice=diagm([2.0,8.0,8.0]); positions=[0.0 1.0; 0.0 0.0; 0.0 0.0]
             h5=joinpath(dir,"converted.h5")
             imported=convert_cp2k_to_hdf5(h5,output,joinpath(dir,"ham"),joinpath(dir,"ovl");
@@ -66,6 +89,58 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
             @test overlap_at_k(restored,k)≈fourier_matrix([S0,Sm,Sp],R,k)
             @test restored.energy_unit=="hartree"
             @test restored.source=="CP2K"
+
+            # Recommended two-name API: standard output + common CSR prefix.
+            imported_two_names=read_cp2k_csr(output,joinpath(dir,"calc"))
+            @test imported_two_names.lattice ≈ lattice
+            @test imported_two_names.positions ≈ positions
+            @test imported_two_names.atomic_numbers == [1,1]
+            @test imported_two_names.norb == [1,1]
+            @test hamiltonian_at_k(imported_two_names,k) ≈ hamiltonian_at_k(imported,k)
+
+            h5_two_names=joinpath(dir,"two_names.h5")
+            @test convert_cp2k_to_hdf5(h5_two_names,output,joinpath(dir,"calc")) isa RealSpaceModel
+            @test read_model(h5_two_names).R == R
+
+            # High-level real-case API: geometry comes from a CP2K cube and
+            # AO ownership from MOLog, so the caller supplies only files.
+            cube=joinpath(dir,"geometry.cube")
+            open(cube,"w") do io
+                println(io,"-Quickstep-")
+                println(io," synthetic test")
+                println(io," 2 0.0 0.0 0.0")
+                println(io," 2 1.8897261246257702 0.0 0.0")
+                println(io," 2 0.0 7.558904498503081 0.0")
+                println(io," 2 0.0 0.0 7.558904498503081")
+                println(io," 1 0.0 0.0 0.0 0.0")
+                println(io," 1 0.0 1.8897261246257702 0.0 0.0")
+            end
+            molog=joinpath(dir,"MOLog")
+            open(molog,"w") do io
+                println(io," MO|    1     1 H  1s        1.0")
+                println(io," MO|    2     2 H  1s        1.0")
+                # Repetition in another MO column block must be harmless.
+                println(io," MO|    1     1 H  1s        0.0")
+                println(io," MO|    2     2 H  1s        0.0")
+            end
+            files=CP2KFiles(output,joinpath(dir,"calc"),cube,molog)
+            imported_auto=read_cp2k_csr(files)
+            @test imported_auto.lattice ≈ lattice
+            @test imported_auto.positions ≈ positions
+            @test imported_auto.atomic_numbers == [1,1]
+            @test imported_auto.norb == [1,1]
+            @test hamiltonian_at_k(imported_auto,k) ≈ hamiltonian_at_k(imported,k)
+
+            h5_auto=joinpath(dir,"converted_auto.h5")
+            @test convert_cp2k_to_hdf5(h5_auto,files) isa RealSpaceModel
+            @test read_model(h5_auto).norb == [1,1]
+
+            path = [[0.0,0.0,0.0], [0.1,0.0,0.0]]
+            identity_M = Matrix{Int}(I,3,3)
+            result_auto = unfold_bandstructure(identity_M,files,path,2;
+                rng=MersenneTwister(11))
+            @test result_auto isa UnfoldedBandStructure
+            @test size(result_auto.energies) == (2,2)
         end
     end
 

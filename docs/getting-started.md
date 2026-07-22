@@ -28,6 +28,73 @@ conversor equivalente ao de `src/converters/cp2k.jl`; a interface exigida
 
 ## 2. Converter para o HDF5 canônico
 
+O fluxo mais simples usa apenas dois nomes de entrada: o output padrão do
+CP2K e o prefixo comum dos CSR de Hamiltoniano e overlap:
+
+```julia
+sc = convert_cp2k_to_hdf5(
+    "Franqueite.h5",
+    "run.out",
+    "outputs/Franqueite",
+)
+```
+
+Para que `run.out` seja autossuficiente mesmo com `PRINT_LEVEL LOW`, habilite
+estes três blocos no `&SUBSYS` do input CP2K:
+
+```text
+&PRINT
+  &CELL ON
+  &END CELL
+  &ATOMIC_COORDINATES ON
+  &END ATOMIC_COORDINATES
+  &KINDS ON
+  &END KINDS
+&END PRINT
+```
+
+O output passa a fornecer rede, coordenadas, números atômicos, ordem dos
+átomos, AOs por kind e o mapa das imagens `R_n`. O prefixo localiza
+automaticamente tanto `*-KS_SPIN_*_R_*.csr` quanto
+`*-S_SPIN_*_R_*.csr`. Depois desse empacotamento único, todo o trabalho usa
+somente `read_model("Franqueite.h5")`.
+
+Outputs com `PRINT_LEVEL MEDIUM` já contêm esses três blocos e não precisam
+do `&SUBSYS / &PRINT` explícito.
+
+### Forma alternativa
+
+No fluxo recomendado, indique somente os arquivos produzidos pelo mesmo
+cálculo CP2K. Não é necessário copiar manualmente rede, posições, espécies
+ou números de orbitais:
+
+```julia
+files = CP2KFiles(
+    "calculo.out",              # saída textual principal do CP2K
+    "outputs/Franqueite",       # prefixo comum dos KS/S CSR
+    "outputs/geometria.cube",  # qualquer cube do mesmo cálculo
+    "outputs/MOLog",           # saída de &PRINT &MO
+)
+
+sc = read_cp2k_csr(files)
+```
+
+O output principal é indispensável porque contém a tabela que associa
+`R_1`, `R_2`, ... às translações periódicas. O `.cube` fornece a célula e
+os átomos; o `MOLog`, a ordem e a quantidade de AOs. A biblioteca cruza as
+três fontes e interrompe com uma mensagem explícita se elas não descrevem o
+mesmo cálculo. Para geometrias relaxadas, passe ainda
+`reference_cube="geometria_ideal.cube"` ao construtor.
+
+Se quiser preservar o modelo importado para reutilização:
+
+```julia
+convert_cp2k_to_hdf5("supercell.h5", files)
+```
+
+A forma detalhada abaixo continua disponível para conversores customizados
+ou quando a metainformação já existe em memória:
+
 ```julia
 using Unfolding
 
@@ -75,6 +142,17 @@ recebe `M` diretamente:
 ```julia
 result = unfold_bandstructure([2 0 0; 0 2 0; 0 0 1], sc, path, 61; tick_labels=labels)
 ```
+
+Também é possível pular a variável `sc` e fazer a importação e o unfolding
+em uma única chamada:
+
+```julia
+M = [2 0 0; 0 2 0; 0 0 1]
+result = unfold_bandstructure(M, files, path, 61; tick_labels=labels)
+```
+
+Assim, no uso real, os únicos dados específicos do cálculo são os quatro
+caminhos de arquivo, a matriz inteira `M` e o caminho de bandas desejado.
 
 Os dois métodos dão exatamente o mesmo resultado; `pc_lattice` é
 recuperado internamente por `sc.lattice * inv(M)`. A distinção de tipo (`M`
