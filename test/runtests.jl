@@ -1,5 +1,6 @@
 using Test
 using LinearAlgebra
+using Random
 using SparseArrays
 using Unfolding
 
@@ -78,6 +79,81 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
         Γbands=solve_bands(model,[[0.0,0.0,0.0]])
         @test Γbands.energies[1]≈[-8.1,8.1] atol=1e-10
         @test norm(Γbands.coefficients[1]'*Γbands.overlaps[1]*Γbands.coefficients[1]-I,Inf)<1e-12
+    end
+
+    @testset "unfolded HDF5 round trip" begin
+        # write_unfolded_hdf5/read_unfolded_hdf5 replace the old plain-text
+        # CSV writer; this checks that the binary format preserves data
+        # exactly, including the optional /reference group and the
+        # UnfoldedBandStructure-based convenience method.
+        kfrac = [0.0 0.5 1.0; 0.0 0.0 0.0; 0.0 0.0 0.0]
+        distance = [0.0, 0.5, 1.0]
+        energies = [[-1.0, 1.0], [-0.8, 0.6], [-0.5, 0.5]]
+        weights = [[1.0, 0.0], [0.7, 0.3], [0.2, 0.8]]
+        reference_energies = [-9.0 -8.0 -7.0; 9.0 8.0 7.0]
+        mktempdir() do dir
+            path = joinpath(dir, "unfolded.h5")
+            write_unfolded_hdf5(path, kfrac, distance, energies, weights;
+                ticks=[0.0, 1.0], tick_labels=["Γ", "M"], energy_unit="eV",
+                reference_energies=reference_energies)
+            data = read_unfolded_hdf5(path)
+            @test data.kpoints_frac == kfrac
+            @test data.distance == distance
+            @test data.ticks == [0.0, 1.0]
+            @test data.tick_labels == ["Γ", "M"]
+            @test data.energies == reduce(hcat, energies)
+            @test data.weights == reduce(hcat, weights)
+            @test data.energy_unit == "eV"
+            @test data.reference_energies == reference_energies
+
+            # write_unfolded_hdf5(path, ::UnfoldedBandStructure) must produce
+            # the same file as the low-level call above.
+            result = UnfoldedBandStructure(kfrac, distance, [0.0, 1.0], ["Γ", "M"],
+                reduce(hcat, energies), reduce(hcat, weights), "eV")
+            path2 = joinpath(dir, "unfolded_struct.h5")
+            write_unfolded_hdf5(path2, result; reference_energies=reference_energies)
+            data2 = read_unfolded_hdf5(path2)
+            @test data2.energies == data.energies
+            @test data2.weights == data.weights
+            @test data2.reference_energies == reference_energies
+
+            # reference_energies is optional; absence must round-trip to nothing.
+            path3 = joinpath(dir, "unfolded_noref.h5")
+            write_unfolded_hdf5(path3, kfrac, distance, energies, weights)
+            @test read_unfolded_hdf5(path3).reference_energies === nothing
+        end
+    end
+
+    @testset "unfold_bandstructure high-level API" begin
+        # unfold_bandstructure must reproduce exactly the manual loop used in
+        # "2x2 pristine unfolding" below (interpolate_kpath + solve_bands +
+        # AtomBasis + unfold_supercell).
+        #
+        # unfold_bandstructure keeps only the single unfolded k-group nearest
+        # the requested primitive point, out of the det(M)=4 groups a pristine
+        # 2x2 supercell K-point folds into. For a pristine supercell that one
+        # group receives exactly nbasis(pc) full-weight SC bands (one copy of
+        # the primitive spectrum), so summing weights over SC bands at a given
+        # path point equals nbasis(pc), not 1 -- the "sum to 1" rule
+        # (check_sum_rule_over_k, exercised below) is over all det(M) groups
+        # for a fixed SC band, not over bands for a fixed group.
+        pc = graphene_primitive_model(); sc = graphene_supercell_model()
+        path = [[0.07, 0.11, 0.0], [0.21, 0.09, 0.0], [0.31, 0.27, 0.0]]
+        result = unfold_bandstructure(pc.lattice, sc, path, 2; rng=MersenneTwister(7))
+
+        @test size(result.kpoints_frac, 2) == length(result.distance) == length(path)
+        @test maximum(abs.(sum(result.weights, dims=1) .- nbasis(pc))) < 1e-10
+
+        ab = AtomBasis(sc)  # AtomBasis(model) convenience constructor
+        transform = round.(Int, pc.lattice \ sc.lattice)
+        k = path[1]
+        K = mod.(transform' * k .+ 0.5, 1.0) .- 0.5
+        bands = solve_bands(sc, [K])
+        W, _, _ = unfold_supercell(pc.lattice, ab, sc.lattice, K, bands.overlaps[1], bands.coefficients[1];
+            rng=MersenneTwister(7))
+        key = collect(keys(W))[argmin([norm(periodic_frac_distance(q, k)) for q in keys(W)])]
+        @test result.energies[:, 1] ≈ bands.energies[1]
+        @test result.weights[:, 1] ≈ W[key]
     end
 
     @testset "2x2 pristine unfolding" begin

@@ -1,9 +1,10 @@
 """
     BandData
 
-Band solution at a list of fractional reciprocal coordinates. Entry `i` in
-each vector belongs to `kpoints_frac[i]`; columns of `coefficients[i]` are
-bands and obey `C† S C = I` with `S = overlaps[i]`.
+Solução de bandas em uma lista de coordenadas fracionárias recíprocas. A
+entrada `i` de cada vetor pertence a `kpoints_frac[i]`; as colunas de
+`coefficients[i]` são as bandas e obedecem `C† S C = I`, com
+`S = overlaps[i]`.
 """
 struct BandData
     kpoints_frac::Vector{Vector{Float64}}
@@ -16,20 +17,22 @@ end
 """
     fourier_matrix(matrices, R, kfrac)
 
-Reconstruct a reciprocal-space matrix from real-space images using
-`A(k) = sum_i exp(+i 2π k⋅R[:,i]) A(R_i)`. Both `kfrac` and `R` are expressed
-in mutually dual fractional bases, so their dot product is dimensionless.
+Reconstrói uma matriz em espaço recíproco a partir das imagens em espaço
+real, usando `A(k) = sum_i exp(+i 2π k⋅R[:,i]) A(R_i)`. Tanto `kfrac`
+quanto `R` estão expressos em bases fracionárias mutuamente duais, de modo
+que o produto escalar entre eles é adimensional.
 """
 function fourier_matrix(matrices::Vector{<:SparseMatrixCSC}, R, kfrac)
     length(matrices) == size(R, 2) || error("matrix/R count mismatch")
     n = size(first(matrices), 1)
     result = zeros(ComplexF64, n, n)
     for i in eachindex(matrices)
-        # cispi(x) evaluates exp(iπx) without explicitly forming πx.
+        # cispi(x) calcula exp(iπx) sem formar πx explicitamente.
         phase = cispi(2 * dot(kfrac, R[:, i]))
         A = matrices[i]
-        # Accumulate only stored nonzeros. This is noticeably cheaper than
-        # converting every localized real-space block to a dense matrix.
+        # Soma apenas os elementos não-nulos armazenados. Isso é bem mais
+        # barato do que converter cada bloco esparso em espaço real para
+        # uma matriz densa antes de somar.
         for col in axes(A, 2), ptr in nzrange(A, col)
             result[A.rowval[ptr], col] += phase * A.nzval[ptr]
         end
@@ -43,11 +46,13 @@ overlap_at_k(model::RealSpaceModel, k) = fourier_matrix(model.S, model.R, k)
 """
     solve_bands(model, kpoints; spin=1, validate=true, atol=1e-8)
 
-Solve `H(k)C = S(k)CE` (paper Eq. 18) at each fractional `k` point. The
-returned eigenvectors are normalized in the nonorthogonal AO metric.
+Resolve `H(k)C = S(k)CE` (Eq. 18 do artigo) em cada ponto `k` fracionário
+fornecido. Os autovetores retornados são normalizados na métrica não-
+ortogonal dos AOs.
 
-With `validate=true`, the routine checks Hermiticity before trusting the
-symmetrized matrices and verifies the paper's normalization `C†SC=I`.
+Com `validate=true`, a rotina confere a hermiticidade das matrizes antes de
+confiar na versão simetrizada, e verifica a normalização `C†SC=I` exigida
+pelo artigo.
 """
 function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol=1e-8)
     1 <= spin <= nspin(model) || throw(ArgumentError("invalid spin channel"))
@@ -57,12 +62,14 @@ function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol
         length(k) == 3 || error("k-point $ik does not have three components")
         Hraw = hamiltonian_at_k(model, k; spin=spin)
         Sraw = overlap_at_k(model, k)
-        # Remove roundoff-level anti-Hermitian noise before LAPACK. The raw
-        # residual is still checked below so a genuinely bad input is rejected.
+        # Remove ruído anti-Hermitiano de arredondamento antes de chamar o
+        # LAPACK. O resíduo original ainda é conferido abaixo, então uma
+        # entrada de fato inconsistente continua sendo rejeitada.
         Hk = (Hraw + Hraw') / 2
         Sk = (Sraw + Sraw') / 2
-        # A positive-definite overlap is required for a well-posed generalized
-        # Hermitian eigenproblem and for the later Löwdin square root.
+        # Um overlap positivo-definido é necessário tanto para o problema de
+        # autovalores generalizado Hermitiano quanto para a raiz quadrada de
+        # Löwdin usada mais adiante.
         minimum(eigvals(Hermitian(Sk))) > 0 || error("S(k) is not positive definite at k-point $ik")
         sol = eigen(Hermitian(Hk), Hermitian(Sk))
         push!(energies, Vector{Float64}(sol.values))
@@ -80,9 +87,9 @@ end
 """
     interpolate_kpath(points, n_per_segment)
 
-Linearly interpolate a path through fractional reciprocal coordinates. Returns
-`(kpoints, distance, ticks)`, where `ticks` marks every supplied vertex. Shared
-segment endpoints are emitted once.
+Interpola linearmente um caminho por coordenadas recíprocas fracionárias.
+Retorna `(kpoints, distance, ticks)`, onde `ticks` marca cada vértice
+fornecido. Extremos de segmento compartilhados são emitidos uma única vez.
 """
 function interpolate_kpath(points::Vector{<:AbstractVector}, n_per_segment::Int)
     n_per_segment >= 2 || throw(ArgumentError("n_per_segment must be at least 2"))
@@ -90,7 +97,7 @@ function interpolate_kpath(points::Vector{<:AbstractVector}, n_per_segment::Int)
     for segment in 1:(length(points)-1)
         start, stop = points[segment], points[segment+1]
         for j in 0:(n_per_segment-1)
-            # The previous segment already emitted this shared endpoint.
+            # O segmento anterior já emitiu este extremo compartilhado.
             segment > 1 && j == 0 && continue
             k = Vector{Float64}(start .+ (j/(n_per_segment-1)) .* (stop .- start))
             if !isempty(kpoints)

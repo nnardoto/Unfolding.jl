@@ -1,45 +1,47 @@
 """
-    Joint diagonalization of commuting, unitary translation operators.
+    Diagonalização conjunta de operadores de translação unitários e comutantes.
 
-T_1, T_2, T_3 (one per PC lattice direction) commute pairwise because
-translations along different lattice vectors commute. Each is unitary
-(pure phase-permutation). We diagonalize a generic Hermitian combination
-of their Hermitian and anti-Hermitian parts. Its eigenvectors are,
-generically (i.e. almost surely for random coefficients), the *common*
-eigenvectors of T_1, T_2, T_3 simultaneously, while Hermiticity guarantees
-an orthonormal basis inside orbital-degenerate eigenspaces. Once we have an
-eigenvector v of this combination, its individual
-T_i-eigenvalues are recovered exactly via the Rayleigh quotient
-λ_i = v† T_i v (exact because v is a true eigenvector of each T_i).
+T_1, T_2, T_3 (um por direção de rede da PC) comutam par a par porque
+translações ao longo de vetores de rede diferentes comutam entre si. Cada um
+é unitário (permutação de fase pura). Diagonalizamos uma combinação
+Hermitiana genérica das partes Hermitiana e anti-Hermitiana de cada T_i.
+Seus autovetores são, genericamente (isto é, quase certamente para
+coeficientes aleatórios), os autovetores *comuns* de T_1, T_2 e T_3
+simultaneamente, enquanto a hermiticidade garante uma base ortonormal
+dentro de autoespaços degenerados por orbital. Uma vez obtido um autovetor
+v dessa combinação, seus autovalores individuais de T_i são recuperados de
+forma exata pelo quociente de Rayleigh λ_i = v† T_i v (exato porque v é de
+fato um autovetor de cada T_i).
 
-This is a numerical alternative to the paper's analytical orbit solution
-(Eqs. 33-38) and sequential 3D diagonalization (Eqs. 46-48). Because the
-operators are commuting and normal, both procedures construct the same joint
-eigenspaces and therefore the same projectors. The graphene regression tests
-in `test/runtests.jl` validate the resulting weights and sum rule.
+Esta é uma alternativa numérica à solução analítica por órbitas do artigo
+(Eqs. 33-38) e à diagonalização sequencial 3D (Eqs. 46-48). Como os
+operadores comutam e são normais, os dois procedimentos constroem os mesmos
+autoespaços conjuntos e, portanto, os mesmos projetores. Os testes de
+regressão do grafeno em `test/runtests.jl` validam os pesos resultantes e a
+regra de soma.
 """
 
 """
     joint_eigen(Ts::Vector{<:AbstractMatrix{ComplexF64}}; rng=Random.default_rng())
 
-Return `(V, lambdas)`:
+Retorna `(V, lambdas)`:
 
-- `V`       : (n × n) matrix whose columns are the common, normalized
-              eigenvectors of all matrices in `Ts`.
-- `lambdas` : (length(Ts) × n) matrix, `lambdas[i, k]` is the eigenvalue of
-              `Ts[i]` for eigenvector `V[:, k]`.
+- `V`       : matriz (n × n) cujas colunas são os autovetores comuns
+              normalizados de todas as matrizes em `Ts`.
+- `lambdas` : matriz (length(Ts) × n); `lambdas[i, k]` é o autovalor de
+              `Ts[i]` para o autovetor `V[:, k]`.
 """
 function joint_eigen(Ts::Vector{Matrix{ComplexF64}}; rng::AbstractRNG=Random.default_rng())
     @assert !isempty(Ts)
     n = size(Ts[1], 1)
 
-    # Diagonalize a generic *Hermitian* function of the commuting unitary
-    # operators.  A generic complex combination is normal in exact
-    # arithmetic, but a general eigensolver need not return an orthonormal
-    # basis inside repeated eigenspaces (the usual case with several AOs per
-    # atom).  The Hermitian construction makes orthonormality guaranteed by
-    # the eigensolver while random real coefficients separate distinct joint
-    # eigenvalue tuples with probability one.
+    # Diagonalizamos uma função *Hermitiana* genérica dos operadores unitários
+    # comutantes. Uma combinação complexa genérica é normal em aritmética
+    # exata, mas um autosolver geral não é obrigado a devolver uma base
+    # ortonormal dentro de autoespaços repetidos (o caso usual quando há
+    # vários AOs por átomo). A construção Hermitiana garante ortonormalidade
+    # pelo próprio autosolver, enquanto coeficientes reais aleatórios separam
+    # tuplas de autovalores conjuntos distintas com probabilidade um.
     Hcombo = zeros(ComplexF64, n, n)
     for T in Ts
         a, b = randn(rng), randn(rng)
@@ -57,7 +59,7 @@ function joint_eigen(Ts::Vector{Matrix{ComplexF64}}; rng::AbstractRNG=Random.def
     for k in 1:n
         vk = @view V[:, k]
         for (i, T) in enumerate(Ts)
-            lambdas[i, k] = dot(vk, T * vk)   # <v|T|v>, exact Rayleigh quotient
+            lambdas[i, k] = dot(vk, T * vk)   # <v|T|v>, quociente de Rayleigh exato
         end
     end
     return V, lambdas
@@ -66,11 +68,12 @@ end
 """
     check_joint_eigen(Ts, V, lambdas; atol=1e-8)
 
-Sanity check: residual ‖T_i v_k - λ_{i,k} v_k‖ for every operator/eigenvector
-pair. Returns the maximum residual found (should be ~1e-10 or smaller for
-well-separated eigenvalues of the random combination; a larger residual
-              usually indicates that the random combination had accidental degeneracies and a different
-random seed should be tried).
+Checagem de sanidade: resíduo ‖T_i v_k - λ_{i,k} v_k‖ para cada par
+operador/autovetor. Retorna o maior resíduo encontrado — deve ser da ordem
+de 1e-10 ou menor quando os autovalores da combinação aleatória estão bem
+separados. Um resíduo maior geralmente indica que a combinação aleatória
+teve degenerescências acidentais e que vale a pena tentar outra semente
+aleatória.
 """
 function check_joint_eigen(Ts::Vector{Matrix{ComplexF64}}, V::AbstractMatrix{ComplexF64},
                             lambdas::AbstractMatrix{ComplexF64})
@@ -89,17 +92,18 @@ end
 """
     kfrac_from_lambdas(lambdas::AbstractMatrix{ComplexF64}; digits=6)
 
-Convert eigenvalues (rows = directions, columns = eigenvector index) to PC
-fractional k-point coordinates `f_k = angle(λ)/(2π) mod 1`, rounded to
-`digits` decimals so that degenerate eigenvectors sharing the same
-(unfolded) PC k-point can be grouped by exact key equality.
+Converte autovalores (linhas = direções, colunas = índice do autovetor) em
+coordenadas fracionárias de k na PC, `f_k = angle(λ)/(2π) mod 1`,
+arredondadas para `digits` casas decimais, de modo que autovetores
+degenerados que compartilham o mesmo ponto k (desdobrado) da PC possam ser
+agrupados por igualdade exata de chave.
 """
 function kfrac_from_lambdas(lambdas::AbstractMatrix{ComplexF64}; digits::Int=6)
     fk = mod.(angle.(lambdas) ./ (2π), 1.0)
     fk = round.(fk; digits=digits)
-    # Floating-point noise can turn an angle infinitesimally below zero into
-    # 1.0 after mod.  Fractional coordinates 1 and 0 are identical and must
-    # not form separate unfolding groups.
+    # Ruído de ponto flutuante pode levar um ângulo infinitesimalmente abaixo
+    # de zero a virar 1.0 depois do mod. As coordenadas fracionárias 1 e 0
+    # são idênticas e não podem formar grupos de unfolding separados.
     fk[fk .== 1.0] .= 0.0
     return fk
 end
@@ -107,8 +111,8 @@ end
 """
     group_by_kfrac(fk::AbstractMatrix{<:Real})
 
-Group eigenvector column indices by identical (rounded) fractional k-point.
-Returns a `Dict{Vector{Float64}, Vector{Int}}`.
+Agrupa índices de coluna de autovetores pelo mesmo ponto k fracionário
+(arredondado). Retorna um `Dict{Vector{Float64}, Vector{Int}}`.
 """
 function group_by_kfrac(fk::AbstractMatrix{<:Real})
     groups = Dict{Vector{Float64},Vector{Int}}()

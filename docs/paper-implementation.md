@@ -67,7 +67,9 @@ W, F, lambdas = unfold_supercell(
 )
 ```
 
-`Kfrac` está na base recíproca da supercélula. As chaves de `W` são os pontos `k` fracionários na base recíproca da célula de referência; cada valor é um vetor com um peso por banda da supercélula.
+`Kfrac` está na base recíproca da supercélula. As chaves de `W` são os pontos `k` fracionários na base recíproca da célula de referência; cada valor é um vetor com um peso por banda da supercélula. `AtomBasis(sc.reference_positions, sc.norb)` acima pode ser escrito como `AtomBasis(sc)`.
+
+Esta seção mostra o mapeamento equação-por-equação num único ponto `K`, como referência para quem quer entender ou estender o método. Para uso em um projeto real, ao longo de um caminho de pontos `k`, veja `unfold_bandstructure` no README -- ele encapsula exatamente esta sequência (mais a escolha do `k` desdobrado correto a cada ponto do caminho).
 
 ### 1. Obter o Hamiltoniano e o overlap no ponto K
 

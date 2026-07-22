@@ -1,24 +1,26 @@
 """
-    Geometry / translation-operator construction.
+    Construção dos operadores de translação (geometria).
 
-Implements the core idea of Quan, Rybin, Scheffler & Carbogno,
+Implementa a ideia central de Quan, Rybin, Scheffler & Carbogno,
 "Efficient band structure unfolding with atom-centered orbitals: General
 theory and application", Phys. Rev. B 113, 085112 (2026):
 
-For a *perfect* (or placeholder-extended, see Sec. II C of the paper) atomic
-mapping between PC and SC, the Löwdin-transformed PC translational operator
-T̃'_PC becomes IDENTICAL to a pure phase-permutation matrix (their Eq. 27,
-Eq. 45) — i.e. it does not depend on the overlap matrix S at all, only on:
+Para um mapeamento *perfeito* (ou estendido por placeholders, ver Seç. II C
+do artigo) entre célula primitiva (PC) e supercélula (SC), o operador de
+translação da PC transformado por Löwdin, T̃'_PC, torna-se IDÊNTICO a uma
+matriz de permutação de fase pura (Eqs. 27 e 45 do artigo) — ou seja, não
+depende do overlap S, apenas de:
 
-  1. the atom-to-atom mapping induced by translating every SC atom by one
-     PC lattice vector, and
-  2. the phase e^{i 2π K·p} picked up whenever that translation crosses the
-     SC boundary (p = integer SC-lattice wrap vector).
+  1. o mapeamento átomo-a-átomo induzido ao transladar cada átomo da SC por
+     um vetor de rede da PC, e
+  2. a fase e^{i 2π K·p} adquirida sempre que essa translação cruza a
+     fronteira da SC (p = vetor inteiro de wrap na rede da SC).
 
-This lets us build T_i (i = 1,2,3, one per PC lattice vector direction)
-purely from geometry, at a given SC K-point, and then jointly diagonalize
-the (commuting, unitary) T_1, T_2, T_3 to obtain the PC-translation
-eigenvectors F_{k,n} used for projection (their Eq. 28/38).
+Isso permite construir T_i (i = 1,2,3, um por direção de rede da PC)
+puramente a partir da geometria, em um dado ponto K da SC, e depois
+diagonalizar conjuntamente os T_1, T_2, T_3 (que comutam e são unitários)
+para obter os autovetores de translação da PC, F_{k,n}, usados na projeção
+(Eqs. 28/38 do artigo).
 """
 
 const Vec3 = AbstractVector{<:Real}
@@ -27,8 +29,8 @@ const Mat3 = AbstractMatrix{<:Real}
 """
     wrap_fractional(frac::AbstractVector{<:Real})
 
-Return `(fracmod, p)` such that `frac = fracmod + p`, with `fracmod`
-componentwise in `[0, 1)` and `p` an integer vector.
+Retorna `(fracmod, p)` tal que `frac = fracmod + p`, com `fracmod`
+componente a componente em `[0, 1)` e `p` um vetor inteiro.
 """
 function wrap_fractional(frac::AbstractVector{<:Real})
     p = floor.(frac)
@@ -39,8 +41,8 @@ end
 """
     periodic_frac_distance(a, b)
 
-Minimal periodic distance between two fractional-coordinate vectors,
-componentwise, folded into [-0.5, 0.5).
+Distância periódica mínima entre dois vetores de coordenadas fracionárias,
+componente a componente, dobrada para o intervalo `[-0.5, 0.5)`.
 """
 function periodic_frac_distance(a::AbstractVector{<:Real}, b::AbstractVector{<:Real})
     d = a .- b
@@ -50,20 +52,21 @@ end
 """
     match_atom(newpos_cart, sc_positions_cart, Ainv; tol=1e-5)
 
-Given a Cartesian position `newpos_cart` (the result of translating some SC
-atom by one PC lattice vector), find which SC atom (column index into
-`sc_positions_cart`) it coincides with *modulo an SC lattice vector*, and
-return `(jatom, p)` where `p` is the integer SC-lattice wrap vector needed:
+Dada uma posição cartesiana `newpos_cart` (resultado de transladar algum
+átomo da SC por um vetor de rede da PC), encontra a qual átomo da SC (índice
+de coluna em `sc_positions_cart`) ela coincide *módulo um vetor de rede da
+SC*, e retorna `(jatom, p)`, onde `p` é o vetor inteiro de wrap necessário:
 
     newpos_cart ≈ sc_positions_cart[:, jatom] + A * p
 
-`Ainv` is the inverse of the SC lattice matrix `A` (columns = lattice
-vectors), used to go to fractional coordinates.
+`Ainv` é a inversa da matriz de rede da SC, `A` (colunas = vetores de rede),
+usada para converter para coordenadas fracionárias.
 
-Throws an error if no atom matches within `tol` (in fractional units) —
-this signals either a wrong `M`/mapping, or a defect/vacancy case that
-needs placeholder orbitals (not yet implemented here, see Sec. II C of the
-paper and the `TODO` in `translation_operator`).
+Lança um erro se nenhum átomo corresponder dentro de `tol` (em unidades
+fracionárias) — isso indica um mapeamento/`M` errado, ou um caso de
+defeito/vacância que precisaria de orbitais placeholder (ainda não
+implementado aqui; ver Seç. II C do artigo e o `TODO` em
+`translation_operator`).
 """
 function match_atom(newpos_cart::AbstractVector{<:Real},
                      sc_positions_cart::AbstractMatrix{<:Real},
@@ -77,7 +80,7 @@ function match_atom(newpos_cart::AbstractVector{<:Real},
         fracmod_j, _ = wrap_fractional(frac_j)
         d = periodic_frac_distance(fracmod_new, fracmod_j)
         if maximum(abs.(d)) < tol
-            # p is such that frac_new = frac_j + p  (up to the tol-close match)
+            # p é tal que frac_new = frac_j + p (dentro da tolerância tol).
             p_exact = frac_new .- frac_j
             p = Int.(round.(p_exact))
             return j, p
@@ -92,18 +95,30 @@ end
 """
     AtomBasis
 
-Bookkeeping for how AOs are laid out per atom in the SC basis.
+Contabilidade de como os AOs estão organizados por átomo na base da SC.
 
-- `positions`  : (3, Natoms) Cartesian atom positions
-- `norb`       : Natoms-vector, number of AOs (basis functions) on each atom
-- `offsets`    : Natoms-vector, index (0-based) of the first AO of each atom
-                 within the full (Nbasis,) AO ordering
+- `positions`  : (3, Natoms), posições cartesianas dos átomos.
+- `norb`       : vetor de tamanho Natoms, número de AOs (funções de base)
+                 em cada átomo.
+- `offsets`    : vetor de tamanho Natoms, índice (base 0) do primeiro AO de
+                 cada átomo dentro da ordenação completa (Nbasis,).
 """
 struct AtomBasis
     positions::Matrix{Float64}
     norb::Vector{Int}
     offsets::Vector{Int}
 end
+
+"""
+    AtomBasis(model::RealSpaceModel)
+
+Constrói o `AtomBasis` do projetor a partir de um `RealSpaceModel`, usando
+`reference_positions` (não `positions`) e `norb`. O projetor de unfolding
+deve sempre ser construído sobre a topologia ideal/de referência, mesmo
+quando a supercélula tem uma geometria física relaxada ou defeituosa — este
+construtor existe para que o usuário final não precise lembrar disso.
+"""
+AtomBasis(model::RealSpaceModel) = AtomBasis(model.reference_positions, model.norb)
 
 function AtomBasis(positions::AbstractMatrix{<:Real}, norb::AbstractVector{<:Integer})
     offsets = cumsum(vcat(0, norb))[1:end-1]
@@ -116,13 +131,15 @@ natoms(ab::AtomBasis) = length(ab.norb)
 """
     translation_operator(pc_vector, ab::AtomBasis, Ainv, Kfrac; tol=1e-5)
 
-Build the (Nbasis × Nbasis) unitary matrix representing the SC-K-space
-Bloch translation operator for translation by one PC lattice vector
-`pc_vector` (Cartesian, length-3), evaluated at fractional SC K-point
-`Kfrac` (length-3, in the SC reciprocal basis B — i.e. K = Kfrac · B).
+Constrói a matriz unitária (Nbasis × Nbasis) que representa o operador de
+translação de Bloch, no espaço-K da SC, para a translação por um vetor de
+rede `pc_vector` da PC (cartesiano, comprimento 3), avaliado no ponto K
+fracionário `Kfrac` da SC (comprimento 3, na base recíproca B da SC — isto
+é, K = Kfrac · B).
 
-This directly builds the Löwdin-transformed operator T'_PC (paper Eq. 27),
-so no overlap matrix is needed here — only the atom mapping and phases.
+Esta função já constrói diretamente o operador transformado por Löwdin,
+T'_PC (Eq. 27 do artigo), portanto nenhum overlap é necessário aqui — só o
+mapeamento entre átomos e as fases.
 """
 function translation_operator(pc_vector::AbstractVector{<:Real},
                                ab::AtomBasis,
@@ -132,10 +149,10 @@ function translation_operator(pc_vector::AbstractVector{<:Real},
     n = nbasis(ab)
     T = zeros(ComplexF64, n, n)
     for iatom in 1:natoms(ab)
-        # The paper defines the translation operator as
-        # T|phi_LJ> = |phi_(L-1)J> (Eq. 15): it moves an AO by -a_i.
-        # Using +a_i here builds the inverse operator and gives conjugated
-        # projector phases (visible already in the Eq. 42 toy model).
+        # O artigo define o operador de translação como
+        # T|phi_LJ> = |phi_(L-1)J> (Eq. 15): ele move um AO por -a_i.
+        # Usar +a_i aqui constrói o operador inverso, o que gera fases de
+        # projetor conjugadas (isso já aparece no modelo de brinquedo da Eq. 42).
         newpos = ab.positions[:, iatom] .- pc_vector
         jatom, p = match_atom(newpos, ab.positions, Ainv; tol=tol)
         if ab.norb[jatom] != ab.norb[iatom]
@@ -145,9 +162,9 @@ function translation_operator(pc_vector::AbstractVector{<:Real},
                   "with different basis sets; the paper handles this via " *
                   "placeholder orbitals (Sec. II C) which is a TODO here.")
         end
-        # Our Bloch sums use the paper's phase convention.  If the mapped AO
-        # differs by the SC lattice vector A*p, the matrix element therefore
-        # acquires exp(-i K.A*p).
+        # Nossas somas de Bloch usam a convenção de fase do artigo. Se o AO
+        # mapeado difere pelo vetor de rede da SC, A*p, o elemento de matriz
+        # ganha o fator de fase exp(-i K.A*p).
         phase = cispi(-2 * dot(Kfrac, p))
         for q in 1:ab.norb[iatom]
             T[ab.offsets[jatom]+q, ab.offsets[iatom]+q] = phase
@@ -159,10 +176,10 @@ end
 """
     translation_operators(pc_lattice, ab::AtomBasis, sc_lattice, Kfrac; tol=1e-5)
 
-Convenience wrapper: builds the three translation operators T_1, T_2, T_3
-for the three columns of `pc_lattice` (3×3 matrix, PC lattice vectors as
-columns), given the SC lattice matrix `sc_lattice` (3×3, columns = SC
-lattice vectors) and fractional SC K-point `Kfrac`.
+Função de conveniência: constrói os três operadores de translação T_1, T_2,
+T_3, um para cada coluna de `pc_lattice` (matriz 3×3, vetores de rede da PC
+como colunas), dada a matriz de rede da SC `sc_lattice` (3×3, colunas =
+vetores de rede da SC) e o ponto K fracionário da SC, `Kfrac`.
 """
 function translation_operators(pc_lattice::AbstractMatrix{<:Real},
                                 ab::AtomBasis,
