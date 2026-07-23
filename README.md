@@ -139,6 +139,7 @@ result = unfold_bandstructure(
     path,
     40; # pontos por segmento
     tick_labels=["X", "Γ", "S", "Y", "Γ"],
+    progress=true,
 )
 
 write_unfolded_hdf5("outputs/Franqueite-unfolded.h5", result)
@@ -158,6 +159,13 @@ OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. seu_script.jl
 A ordem dos pontos no resultado é a mesma do caminho de entrada. Para forçar
 o comportamento serial, use `parallel=false` em qualquer uma das duas
 funções. `Threads.nthreads()` mostra quantas threads Julia estão disponíveis.
+Com `progress=true`, a execução mostra separadamente o avanço da solução das
+bandas e do unfolding, incluindo percentual e número de pontos concluídos:
+
+```text
+Bandas    [████████████████████████] 100% (157/157)
+Unfolding [████████████████████████] 100% (157/157)
+```
 
 O arquivo final contém pontos k, energias, pesos espectrais e rótulos. Seu
 schema está documentado em

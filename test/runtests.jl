@@ -246,6 +246,16 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
         @test threaded_bands.energies ≈ serial_bands.energies
         @test threaded_bands.overlaps ≈ serial_bands.overlaps
 
+        progress_output = IOBuffer()
+        progress_result = unfold_bandstructure(pc.lattice, sc, path, 2;
+            rng=MersenneTwister(7), parallel=true, progress=true,
+            progress_io=progress_output)
+        progress_text = String(take!(progress_output))
+        @test occursin("Bandas", progress_text)
+        @test occursin("Unfolding", progress_text)
+        @test count(contains("100%"), split(progress_text, '\r')) == 2
+        @test progress_result.energies ≈ serial.energies
+
         # unfold_bandstructure(M, sc, ...) must reproduce exactly the
         # pc_lattice-based call: M = round.(Int, pc.lattice \ sc.lattice) is
         # exactly diagm([2, 2, 1]) for this 2x2 graphene supercell.

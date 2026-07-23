@@ -114,7 +114,8 @@ end
 """
     unfold_bandstructure(pc_lattice, sc::RealSpaceModel, path, n_per_segment;
                         tick_labels=nothing, spin=1, tol=1e-5,
-                        rng=Random.default_rng(), parallel=Threads.nthreads() > 1)
+                        rng=Random.default_rng(), parallel=Threads.nthreads() > 1,
+                        progress=false)
 
 Camada de conveniência para o caso de uso mais comum: dada a rede da célula
 de referência (`pc_lattice`) e uma supercélula já carregada (`sc`), resolve
@@ -140,6 +141,8 @@ Com `parallel=true`, tanto a solução das bandas quanto o unfolding são
 distribuídos por ponto k entre as threads Julia. A ordem do caminho e do
 resultado permanece inalterada.
 
+Use `progress=true` para exibir o avanço das etapas `Bandas` e `Unfolding`.
+
 Retorna uma `UnfoldedBandStructure`.
 """
 function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
@@ -150,7 +153,9 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
                               spin::Int=1,
                               tol::Real=1e-5,
                               rng::AbstractRNG=Random.default_rng(),
-                              parallel::Bool=Threads.nthreads() > 1)
+                              parallel::Bool=Threads.nthreads() > 1,
+                              progress::Bool=false,
+                              progress_io::IO=stderr)
     kpc, distance, ticks = interpolate_kpath(path, n_per_segment)
     labels = tick_labels === nothing ? fill("", length(ticks)) : String.(collect(tick_labels))
     length(labels) == length(ticks) || throw(DimensionMismatch("tick_labels/ticks count mismatch"))
@@ -168,7 +173,9 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
     energies = zeros(Float64, nb, nk)
     weights = zeros(Float64, nb, nk)
     Ksc = [mod.(transform' * k .+ 0.5, 1.0) .- 0.5 for k in kpc]
-    bands = solve_bands(sc, Ksc; spin=spin, parallel=parallel)
+    bands = solve_bands(sc, Ksc; spin=spin, parallel=parallel,
+                        progress=progress, progress_io=progress_io)
+    report_progress = _progress_reporter("Unfolding", nk, progress && nk > 0, progress_io)
 
     function unfold_one!(i, point_rng)
         k = kpc[i]
@@ -181,6 +188,7 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
         kpoints_frac[:, i] = k
         energies[:, i] = bands.energies[i]
         weights[:, i] = W[key]
+        report_progress()
         return nothing
     end
 

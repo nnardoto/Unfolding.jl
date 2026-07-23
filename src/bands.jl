@@ -14,6 +14,34 @@ struct BandData
     energy_unit::String
 end
 
+"""Cria um atualizador de progresso seguro para chamadas concorrentes."""
+function _progress_reporter(label::AbstractString, total::Integer, enabled::Bool, io::IO)
+    completed = Ref(0)
+    last_percent = Ref(-1)
+    output_lock = ReentrantLock()
+
+    function report()
+        enabled || return nothing
+        lock(output_lock) do
+            completed[] += 1
+            percent = total == 0 ? 100 : floor(Int, 100 * completed[] / total)
+            if percent > last_percent[]
+                width = 24
+                filled = floor(Int, width * completed[] / total)
+                bar = repeat("█", filled) * repeat("░", width - filled)
+                print(io, '\r', label, " [", bar, "] ", lpad(percent, 3), "% (",
+                      completed[], '/', total, ')')
+                flush(io)
+                last_percent[] = percent
+            end
+            completed[] == total && println(io)
+        end
+        return nothing
+    end
+
+    return report
+end
+
 """
     fourier_matrix(matrices, R, kfrac)
 
@@ -45,7 +73,7 @@ overlap_at_k(model::RealSpaceModel, k) = fourier_matrix(model.S, model.R, k)
 
 """
     solve_bands(model, kpoints; spin=1, validate=true, atol=1e-8,
-                parallel=Threads.nthreads() > 1)
+                parallel=Threads.nthreads() > 1, progress=false)
 
 Resolve `H(k)C = S(k)CE` (Eq. 18 do artigo) em cada ponto `k` fracionário
 fornecido. Os autovetores retornados são normalizados na métrica não-
@@ -57,15 +85,18 @@ pelo artigo.
 
 Os pontos k são independentes. Com `parallel=true`, eles são distribuídos
 entre as threads Julia, sem alterar a ordem das entradas no `BandData`.
+Use `progress=true` para acompanhar a fração de pontos concluídos.
 """
 function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol=1e-8,
-                     parallel=Threads.nthreads() > 1)
+                     parallel=Threads.nthreads() > 1, progress::Bool=false,
+                     progress_io::IO=stderr)
     1 <= spin <= nspin(model) || throw(ArgumentError("invalid spin channel"))
     ks = [Vector{Float64}(k) for k in kpoints]
     nk = length(ks)
     energies = Vector{Vector{Float64}}(undef, nk)
     coefficients = Vector{Matrix{ComplexF64}}(undef, nk)
     overlaps = Vector{Matrix{ComplexF64}}(undef, nk)
+    report_progress = _progress_reporter("Bandas", nk, progress && nk > 0, progress_io)
 
     function solve_one!(ik)
         k = ks[ik]
@@ -90,6 +121,7 @@ function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol
             norm(Sraw-Sraw', Inf) <= atol*max(norm(Sraw,Inf),1) || error("non-Hermitian S(k) at $ik")
             norm(sol.vectors' * Sk * sol.vectors - I, Inf) <= 10atol || error("C†SC != I at $ik")
         end
+        report_progress()
         return nothing
     end
 
