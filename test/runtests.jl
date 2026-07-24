@@ -303,8 +303,8 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
         @test count(startswith("Unfolding: "), progress_lines) == length(path) + 1
         @test "Bandas: 0 / $(length(path))" in progress_lines
         @test "Unfolding: 0 / $(length(path))" in progress_lines
-        @test "Bandas: $(length(path)) / $(length(path))" in progress_lines
-        @test "Unfolding: $(length(path)) / $(length(path))" in progress_lines
+        @test any(startswith("Bandas: $(length(path)) / $(length(path)) ("), progress_lines)
+        @test any(startswith("Unfolding: $(length(path)) / $(length(path)) ("), progress_lines)
         @test progress_result.energies ≈ serial.energies
 
         # unfold_bandstructure(M, sc, ...) must reproduce exactly the

@@ -133,20 +133,27 @@ Resolve as bandas e executa o unfolding de um bloco dentro de um worker.
 Cada ponto é resolvido e desdobrado imediatamente. As matrizes densas de
 overlap e coeficientes permanecem locais ao worker somente durante esse
 ponto; apenas energias e pesos retornam ao processo principal.
+
+Se `progress_channel` não for `nothing`, cada ponto publica nele
+`(tempo_bandas, tempo_unfolding)` assim que termina, em vez de só ao fim do
+bloco inteiro -- é o que dá visibilidade ponto a ponto ao processo
+principal mesmo com blocos grandes.
 """
-function _distributed_band_unfold_chunk(pcl, ab, sc, Ks, ks, spin, tol, seeds)
+function _distributed_band_unfold_chunk(pcl, ab, sc, Ks, ks, spin, tol, seeds,
+                                        progress_channel)
     length(Ks) == length(ks) == length(seeds) ||
         throw(DimensionMismatch("distributed band/unfolding chunk size mismatch"))
     chunk_energies = Vector{Vector{Float64}}(undef, length(ks))
     chunk_weights = Vector{Vector{Float64}}(undef, length(ks))
     for j in eachindex(ks)
-        point_bands = solve_bands(sc, (Ks[j],);
-                                  spin=spin, parallel=false, progress=false)
+        band_dt = @elapsed(point_bands = solve_bands(sc, (Ks[j],);
+                                                      spin=spin, parallel=false, progress=false))
         chunk_energies[j] = point_bands.energies[1]
-        chunk_weights[j] = _unfold_weight_at_k(
+        unfold_dt = @elapsed(chunk_weights[j] = _unfold_weight_at_k(
             pcl, ab, sc.lattice, Ks[j], point_bands.overlaps[1],
             point_bands.coefficients[1], ks[j], tol,
-            MersenneTwister(seeds[j]))
+            MersenneTwister(seeds[j])))
+        progress_channel === nothing || put!(progress_channel, (band_dt, unfold_dt))
     end
     return (energies=chunk_energies, weights=chunk_weights)
 end
@@ -262,7 +269,8 @@ end
 function _distributed_band_unfold_results(pcl, ab, sc, Ksc, kpc, spin, tol,
                                           point_seeds, worker_ids,
                                           batches_per_process,
-                                          report_bands, report_unfolding)
+                                          report_bands, report_unfolding,
+                                          progress::Bool)
     batches_per_process >= 1 ||
         throw(ArgumentError("unfold_batches_per_process must be at least 1"))
     nk = length(kpc)
@@ -271,26 +279,47 @@ function _distributed_band_unfold_results(pcl, ab, sc, Ksc, kpc, spin, tol,
     chunks = [collect(first_index:min(first_index + chunk_size - 1, nk))
               for first_index in 1:chunk_size:nk]
 
+    # Cada worker publica aqui o tempo de bandas/unfolding de cada ponto assim
+    # que termina. Sem isso, o progresso só seria conhecido ao fim de cada
+    # bloco inteiro (remotecall_fetch síncrono), dando a falsa impressão de
+    # blocos de silêncio seguidos de rajadas mesmo com a CPU sempre ocupada.
+    progress_channel = nothing
+    consumer = nothing
+    if progress
+        progress_channel = RemoteChannel(() -> Channel{Tuple{Float64,Float64}}(nk))
+        consumer = @async begin
+            for _ in 1:nk
+                band_dt, unfold_dt = take!(progress_channel)
+                report_bands(band_dt)
+                report_unfolding(unfold_dt)
+            end
+        end
+    end
+
     # O CachingPool envia este fechamento (e portanto o modelo esparso) uma
     # única vez a cada worker. Chamadas seguintes transmitem apenas os índices
     # do bloco, evitando reenviar `sc` ou matrizes densas a cada lote.
     pool = CachingPool(worker_ids)
     process_chunk = indices -> _distributed_band_unfold_chunk(
         pcl, ab, sc, Ksc[indices], kpc[indices], spin, tol,
-        point_seeds[indices])
+        point_seeds[indices], progress_channel)
     chunk_results = try
         asyncmap(chunks; ntasks=min(length(worker_ids), length(chunks))) do indices
-            result = remotecall_fetch(process_chunk, pool, indices)
-            for _ in indices
-                report_bands()
-                report_unfolding()
-            end
-            return result
+            remotecall_fetch(process_chunk, pool, indices)
         end
     finally
         # Libera a cópia do fechamento/modelo quando workers persistentes são
         # mantidos para chamadas futuras.
         clear!(pool)
+        # Libera o consumidor de progresso mesmo se algum bloco tiver
+        # lançado um erro antes de publicar todos os seus pontos.
+        progress_channel === nothing || close(progress_channel)
+    end
+    progress && try
+        wait(consumer)
+    catch
+        # O canal pode ter sido fechado cedo por causa de um erro acima;
+        # a exceção original (se houver) já está se propagando por ali.
     end
 
     energies = Vector{Vector{Float64}}(undef, nk)
@@ -411,7 +440,7 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
             process_energies, process_weights = _distributed_band_unfold_results(
                 pcl, ab, sc, Ksc, kpc, spin, tol, point_seeds,
                 worker_ids, unfold_batches_per_process,
-                report_bands, report_unfolding)
+                report_bands, report_unfolding, progress)
             for i in eachindex(kpc)
                 kpoints_frac[:, i] = kpc[i]
                 energies[:, i] = process_energies[i]
@@ -429,13 +458,13 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
 
         function store_unfolded_point!(i, point_rng)
             k = kpc[i]
-            point_weights = _unfold_weight_at_k(
+            Δt = @elapsed(point_weights = _unfold_weight_at_k(
                 pcl, ab, sc.lattice, Ksc[i], bands.overlaps[i],
-                bands.coefficients[i], k, tol, point_rng)
+                bands.coefficients[i], k, tol, point_rng))
             kpoints_frac[:, i] = k
             energies[:, i] = bands.energies[i]
             weights[:, i] = point_weights
-            report_unfolding()
+            report_unfolding(Δt)
             return nothing
         end
 

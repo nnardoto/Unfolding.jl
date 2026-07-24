@@ -29,11 +29,16 @@ function _progress_reporter(label::AbstractString, total::Integer, enabled::Bool
         flush(io)
     end
 
-    function report()
+    function report(Δt::Union{Nothing,Real}=nothing)
         enabled || return nothing
         lock(output_lock) do
             completed[] += 1
-            println(io, label, ": ", completed[], " / ", total)
+            if Δt === nothing
+                println(io, label, ": ", completed[], " / ", total)
+            else
+                println(io, label, ": ", completed[], " / ", total,
+                        " (", round(Δt; digits=3), "s)")
+            end
             flush(io)
         end
         return nothing
@@ -101,27 +106,29 @@ function solve_bands(model::RealSpaceModel, kpoints; spin=1, validate=true, atol
     function solve_one!(ik)
         k = ks[ik]
         length(k) == 3 || error("k-point $ik does not have three components")
-        Hraw = hamiltonian_at_k(model, k; spin=spin)
-        Sraw = overlap_at_k(model, k)
-        # Remove ruído anti-Hermitiano de arredondamento antes de chamar o
-        # LAPACK. O resíduo original ainda é conferido abaixo, então uma
-        # entrada de fato inconsistente continua sendo rejeitada.
-        Hk = (Hraw + Hraw') / 2
-        Sk = (Sraw + Sraw') / 2
-        # Um overlap positivo-definido é necessário tanto para o problema de
-        # autovalores generalizado Hermitiano quanto para a raiz quadrada de
-        # Löwdin usada mais adiante.
-        minimum(eigvals(Hermitian(Sk))) > 0 || error("S(k) is not positive definite at k-point $ik")
-        sol = eigen(Hermitian(Hk), Hermitian(Sk))
-        energies[ik] = Vector{Float64}(sol.values)
-        coefficients[ik] = Matrix{ComplexF64}(sol.vectors)
-        overlaps[ik] = Matrix{ComplexF64}(Sk)
-        if validate
-            norm(Hraw-Hraw', Inf) <= atol*max(norm(Hraw,Inf),1) || error("non-Hermitian H(k) at $ik")
-            norm(Sraw-Sraw', Inf) <= atol*max(norm(Sraw,Inf),1) || error("non-Hermitian S(k) at $ik")
-            norm(sol.vectors' * Sk * sol.vectors - I, Inf) <= 10atol || error("C†SC != I at $ik")
+        Δt = @elapsed begin
+            Hraw = hamiltonian_at_k(model, k; spin=spin)
+            Sraw = overlap_at_k(model, k)
+            # Remove ruído anti-Hermitiano de arredondamento antes de chamar o
+            # LAPACK. O resíduo original ainda é conferido abaixo, então uma
+            # entrada de fato inconsistente continua sendo rejeitada.
+            Hk = (Hraw + Hraw') / 2
+            Sk = (Sraw + Sraw') / 2
+            # Um overlap positivo-definido é necessário tanto para o problema de
+            # autovalores generalizado Hermitiano quanto para a raiz quadrada de
+            # Löwdin usada mais adiante.
+            minimum(eigvals(Hermitian(Sk))) > 0 || error("S(k) is not positive definite at k-point $ik")
+            sol = eigen(Hermitian(Hk), Hermitian(Sk))
+            energies[ik] = Vector{Float64}(sol.values)
+            coefficients[ik] = Matrix{ComplexF64}(sol.vectors)
+            overlaps[ik] = Matrix{ComplexF64}(Sk)
+            if validate
+                norm(Hraw-Hraw', Inf) <= atol*max(norm(Hraw,Inf),1) || error("non-Hermitian H(k) at $ik")
+                norm(Sraw-Sraw', Inf) <= atol*max(norm(Sraw,Inf),1) || error("non-Hermitian S(k) at $ik")
+                norm(sol.vectors' * Sk * sol.vectors - I, Inf) <= 10atol || error("C†SC != I at $ik")
+            end
         end
-        report_progress()
+        report_progress(Δt)
         return nothing
     end
 

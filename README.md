@@ -160,18 +160,25 @@ A ordem dos pontos no resultado é a mesma do caminho de entrada. Para forçar
 o comportamento serial, use `parallel=false` em qualquer uma das duas
 funções. `Threads.nthreads()` mostra quantas threads Julia estão disponíveis.
 Com `progress=true`, a execução registra cada ponto concluído em uma linha
-própria. A saída é descarregada imediatamente, portanto também pode ser
-acompanhada em tempo real por um arquivo de texto externo:
+própria, com o tempo gasto naquele ponto entre parênteses -- útil tanto para
+acompanhar o andamento quanto para identificar pontos anormalmente lentos. A
+saída é descarregada imediatamente, portanto também pode ser acompanhada em
+tempo real por um arquivo de texto externo:
 
 ```text
 Bandas: 0 / 157
-Bandas: 1 / 157
-Bandas: 2 / 157
+Bandas: 1 / 157 (2.184s)
+Bandas: 2 / 157 (2.201s)
 ...
 Unfolding: 0 / 157
-Unfolding: 1 / 157
-Unfolding: 2 / 157
+Unfolding: 1 / 157 (0.732s)
+Unfolding: 2 / 157 (0.719s)
 ```
+
+Em `unfold_processes > 0`, cada ponto é reportado assim que o worker termina
+de calculá-lo (não apenas quando um bloco inteiro de `unfold_batches_per_process`
+volta ao processo principal), então o log reflete o progresso real mesmo com
+blocos grandes.
 
 #### Controle diretamente em um notebook
 
