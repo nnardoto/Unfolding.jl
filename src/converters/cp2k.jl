@@ -340,6 +340,54 @@ function _cp2k_image_mapping(lines, label)
     R
 end
 
+"""
+    _cp2k_reference_in_csr_gauge(lattice, positions, reference_positions, R;
+                                 half_tolerance=1e-5)
+
+Move the reference sites to the same periodic-image representatives used by
+CP2K's real-space matrices.  CP2K builds the AO neighbor list from
+`pbc(position, cell)`, which subtracts the nearest integer from each active
+fractional coordinate.  The CSR image labels therefore refer to these centered
+positions, rather than necessarily to the coordinates printed in the output or
+cube file.
+
+The same image shift obtained from the *physical* positions is applied to the
+ideal reference positions.  This is important for relaxed structures: the
+electronic matrices follow the physical AO image chosen by CP2K, while the
+projector must retain the ideal atom mapping.
+
+CP2K prints cell-vector components with less precision than lengths and angles.
+Fractional coordinates reconstructed from that output can consequently turn an
+exact boundary value such as `0.5` into `0.500003`.  Values within
+`half_tolerance` of a half integer are stabilized before rounding; Julia's
+ties-to-even rule then keeps the representative already present in the input at
+an ambiguous cell boundary.
+"""
+function _cp2k_reference_in_csr_gauge(lattice, positions, reference_positions, R;
+                                      half_tolerance::Real=1e-5)
+    A = Matrix{Float64}(lattice)
+    physical = Matrix{Float64}(positions)
+    reference = Matrix{Float64}(reference_positions)
+    size(reference) == size(physical) ||
+        throw(DimensionMismatch("reference_positions/positions shape mismatch"))
+
+    fractional = A \ physical
+    image_shifts = zeros(Int, size(fractional))
+    for direction in axes(fractional, 1)
+        # A direction absent from every CSR image is nonperiodic (or has no AO
+        # coupling across its boundary), so changing its representative cannot
+        # contribute to the reciprocal-space matrices and is best avoided.
+        any(!iszero, @view R[direction, :]) || continue
+        for atom in axes(fractional, 2)
+            value = fractional[direction, atom]
+            nearest_half = round(2value) / 2
+            stabilized = abs(value - nearest_half) <= half_tolerance ? nearest_half : value
+            image_shifts[direction, atom] = round(Int, stabilized)
+        end
+    end
+    reference - A * image_shifts
+end
+
 _cp2k_regex_escape(text) = replace(text, r"([^A-Za-z0-9_])" => s"\\\1")
 
 function _cp2k_csr_files(prefix, label, spin, nR)
@@ -416,7 +464,9 @@ function read_cp2k_csr(output::AbstractString,
          for spin in spins]
     S = [_read_cp2k_csr_matrix(path, n)
          for path in _cp2k_csr_files(s_prefix, "S", 1, nR)]
-    RealSpaceModel(lattice, positions, reference_positions, atomic_numbers,
+    csr_reference_positions = _cp2k_reference_in_csr_gauge(
+        lattice, positions, reference_positions, RH)
+    RealSpaceModel(lattice, positions, csr_reference_positions, atomic_numbers,
                    norb, RH, H, S;
                    energy_unit="hartree", length_unit="angstrom",
                    source="CP2K", validate=validate)

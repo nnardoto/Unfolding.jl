@@ -90,6 +90,18 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
             @test restored.energy_unit=="hartree"
             @test restored.source=="CP2K"
 
+            # CP2K constructs its real-space neighbor list from positions
+            # centered around the origin.  The projector reference must use
+            # the same image gauge, while exact/near half-cell boundary values
+            # remain stable despite the limited precision of printed cells.
+            gauge_positions = [0.0 1.000002 1.5; 0.0 0.0 0.0; 0.0 0.0 0.0]
+            gauge_R = [0 -1 1; 0 0 0; 0 0 0]
+            gauge_reference = Unfolding._cp2k_reference_in_csr_gauge(
+                lattice, gauge_positions, gauge_positions, gauge_R)
+            @test gauge_reference[:, 1] ≈ gauge_positions[:, 1]
+            @test gauge_reference[:, 2] ≈ gauge_positions[:, 2]
+            @test gauge_reference[:, 3] ≈ [-0.5, 0.0, 0.0]
+
             # Recommended two-name API: standard output + common CSR prefix.
             imported_two_names=read_cp2k_csr(output,joinpath(dir,"calc"))
             @test imported_two_names.lattice ≈ lattice
