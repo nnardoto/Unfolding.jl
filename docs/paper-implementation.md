@@ -267,6 +267,7 @@ Essa separação permite portar outros códigos: cada novo adaptador precisa ape
 - deslocamentos atômicos quando `reference_positions` preserva o mapeamento ideal;
 - defeitos onsite e substituições que preservem o número e a ordenação dos AOs;
 - overlap completo e solução do problema generalizado;
+- paralelização dos pontos `K` de um caminho entre threads Julia;
 - pesos e função espectral com alargamento Lorentziano.
 
 ### Ainda não implementado
@@ -274,7 +275,7 @@ Essa separação permite portar outros códigos: cada novo adaptador precisa ape
 - orbitais placeholder das Eqs. 43–45 para vacâncias, intersticiais ou espécies com números diferentes de AOs;
 - matrizes reais-espaciais complexas, necessárias para alguns casos com acoplamento spin-órbita ou magnetismo não colinear;
 - segunda regra de soma sobre todos os estados `N` como verificação pública separada;
-- paralelização sobre pontos `K`, discutida na Sec. II D do artigo;
+- paralelização distribuída entre processos ou nós de um cluster;
 - médias de ensemble em temperatura finita da Eq. 53.
 
 No estado atual, `translation_operator` interrompe explicitamente a execução quando o mapeamento requer números diferentes de orbitais. Isso evita produzir um resultado formalmente incorreto enquanto a extensão por placeholders não estiver disponível.

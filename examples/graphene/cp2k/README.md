@@ -28,6 +28,10 @@ The example assumes 13 spherical AOs per carbon for `DZVP-MOLOPT-SR-GTH`. If the
 
 ## Lightweight end-to-end debug case
 
+The theory behind this validation case, including the CP2K periodic gauge and
+the spectral heatmap, is developed as a self-contained study chapter in
+[`../../../docs/cp2k-unfolding-study.md`](../../../docs/cp2k-unfolding-study.md).
+
 `graphene_debug_2x2.inp` and `graphene_debug_primitive.inp` form a small,
 self-checking pair intended for debugging the complete CP2K → CSR → HDF5 →
 unfolding path. They use the minimal `SZV-MOLOPT-SR-GTH` basis and equivalent

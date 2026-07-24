@@ -199,6 +199,11 @@ modelo canônico. O schema e a convenção de fases estão em
 a implementação está em
 [`docs/paper-implementation.md`](docs/paper-implementation.md).
 
+Para estudar a teoria com mais contexto — incluindo o gauge periódico do
+CP2K, a origem dos pesos espúrios, os testes de validação e a construção do
+mapa de calor — veja o capítulo
+[`docs/cp2k-unfolding-study.md`](docs/cp2k-unfolding-study.md).
+
 ## Exemplo de teste: grafeno
 
 Para gerar os modelos pequenos de grafeno e exportar um unfolding:
