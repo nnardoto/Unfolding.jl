@@ -650,6 +650,49 @@ Com `progress=true`, duas barras mostram separadamente:
 - solução das bandas;
 - cálculo dos pesos de unfolding.
 
+Quando a etapa de projeção escala pouco com threads, ela pode ser transferida
+para processos Julia independentes:
+
+```sh
+OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. \
+  examples/graphene/cp2k/debug_unfold.jl \
+  examples/graphene/cp2k/run_debug 32 4
+```
+
+O terceiro argumento solicita quatro processos para o unfolding. Na API, a
+mesma configuração é:
+
+```julia
+result = unfold_bandstructure(
+    M, model, path, 32;
+    parallel=true,
+    unfold_processes=4,
+    unfold_batches_per_process=4,
+    progress=true,
+)
+```
+
+As bandas continuam sendo resolvidas com threads no processo principal.
+Depois, os pontos são separados em blocos; cada overlap e conjunto de
+coeficientes é enviado a apenas um worker. Isso evita copiar o caminho
+completo para todos os processos.
+
+Workers que já existem são reutilizados. Se faltarem, a função cria workers
+locais com uma thread e BLAS serial. Os workers temporários são removidos ao
+final, a menos que `keep_processes=true`.
+
+O número ideal depende do tamanho da base, da quantidade de imagens e do
+número de pontos. Processos acrescentam custos de inicialização e
+serialização; por isso, o pequeno exemplo de grafeno pode ficar mais lento.
+Para um cálculo real:
+
+1. aqueça uma execução curta para compilar as funções;
+2. compare `unfold_processes=0`, `2`, `4`, ...;
+3. mantenha uma thread BLAS por processo;
+4. use `keep_processes=true` ao repetir vários caminhos;
+5. acompanhe também a memória, pois cada worker mantém o bloco que está
+   processando.
+
 ### 10.4 Arquivos produzidos
 
 O script grava:

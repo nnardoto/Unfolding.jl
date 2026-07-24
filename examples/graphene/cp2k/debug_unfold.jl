@@ -35,10 +35,12 @@ path = [
 ]
 labels = ["Γ", "K", "M", "Γ"]
 n_per_segment = length(ARGS) >= 2 ? parse(Int, ARGS[2]) : 32
+unfold_processes = length(ARGS) >= 3 ? parse(Int, ARGS[3]) : 0
 
 result = unfold_bandstructure(M, model, path, n_per_segment;
     tick_labels=labels,
     rng=MersenneTwister(2026),
+    unfold_processes=unfold_processes,
     progress=true)
 
 # Independent primitive-cell calculation on exactly the same requested path.

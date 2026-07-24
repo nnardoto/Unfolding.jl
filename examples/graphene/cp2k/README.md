@@ -71,4 +71,15 @@ python3 examples/graphene/cp2k/plot_debug.py
 ```
 
 Pass another run directory as the first argument to both scripts. The Julia
-script also accepts the number of samples per segment as its second argument.
+script also accepts the number of samples per segment as its second argument
+and the number of unfolding worker processes as its third:
+
+```sh
+OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. \
+  examples/graphene/cp2k/debug_unfold.jl \
+  examples/graphene/cp2k/run_debug 32 4
+```
+
+Use zero processes (the default) for threaded unfolding. Local worker startup
+is deliberately automatic here for experimentation; for this tiny graphene
+case its overhead can exceed the calculation itself.

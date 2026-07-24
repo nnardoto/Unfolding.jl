@@ -147,10 +147,10 @@ write_unfolded_hdf5("outputs/Franqueite-unfolded.h5", result)
 
 ### Paralelização do caminho k
 
-`solve_bands` e `unfold_bandstructure` distribuem automaticamente os pontos
-k entre as threads disponíveis. Para usar todos os núcleos, inicie Julia com
-múltiplas threads e mantenha o BLAS em uma thread, evitando duas camadas de
-paralelismo competindo pelos mesmos núcleos:
+`solve_bands` distribui automaticamente os pontos k entre as threads
+disponíveis. Por padrão, `unfold_bandstructure` faz o mesmo. Para usar todos
+os núcleos, inicie Julia com múltiplas threads e mantenha o BLAS em uma
+thread, evitando duas camadas de paralelismo competindo pelos mesmos núcleos:
 
 ```sh
 OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. seu_script.jl
@@ -166,6 +166,43 @@ bandas e do unfolding, incluindo percentual e número de pontos concluídos:
 Bandas    [████████████████████████] 100% (157/157)
 Unfolding [████████████████████████] 100% (157/157)
 ```
+
+Para estruturas maiores, a projeção de unfolding pode escalar melhor em
+processos Julia independentes:
+
+```julia
+result = unfold_bandstructure(
+    M,
+    sc,
+    path,
+    40;
+    parallel=true,             # bandas entre threads
+    unfold_processes=4,        # unfolding em quatro processos
+    progress=true,
+)
+```
+
+`unfold_processes=0` mantém o modo por threads. Um valor positivo reutiliza
+workers já presentes e cria os que faltarem com uma thread e BLAS serial.
+Os workers criados pela chamada são encerrados ao final. Em uma sequência de
+cálculos, `keep_processes=true` evita pagar novamente sua inicialização.
+
+`unfold_batches_per_process=4` é o padrão. Aumente-o se os pontos tiverem
+custos muito diferentes; diminua-o para reduzir comunicação. Os dados de
+cada ponto são enviados a somente um processo, em blocos.
+
+Processos têm custo de inicialização e serialização. Para modelos pequenos,
+threads normalmente continuam mais rápidas. Compare `unfold_processes=0`,
+`2`, `4`, ... no caso real, mantendo o produto
+`processos × threads do BLAS` dentro do número de núcleos físicos.
+
+Também é possível iniciar workers antes do script:
+
+```sh
+OPENBLAS_NUM_THREADS=1 julia -p 4 --threads=auto --project=. seu_script.jl
+```
+
+Eles serão reutilizados quando `unfold_processes=4`.
 
 O arquivo final contém pontos k, energias, pesos espectrais e rótulos. Seu
 schema está documentado em

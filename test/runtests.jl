@@ -1,4 +1,5 @@
 using Test
+using Distributed
 using LinearAlgebra
 using Random
 using SparseArrays
@@ -250,6 +251,25 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
         @test threaded.distance == serial.distance
         @test threaded.energies ≈ serial.energies
         @test threaded.weights ≈ serial.weights atol=1e-10
+
+        processes_before = Set(Distributed.procs())
+        distributed_progress = IOBuffer()
+        distributed = unfold_bandstructure(pc.lattice, sc, path, 2;
+            rng=MersenneTwister(7), parallel=true, unfold_processes=2,
+            unfold_batches_per_process=2, progress=true,
+            progress_io=distributed_progress)
+        distributed_progress_text = String(take!(distributed_progress))
+        @test occursin("Processos: preparando 2 worker(s)", distributed_progress_text)
+        @test occursin("Unfolding", distributed_progress_text)
+        @test distributed.kpoints_frac == threaded.kpoints_frac
+        @test distributed.distance == threaded.distance
+        @test distributed.energies ≈ threaded.energies
+        @test distributed.weights ≈ threaded.weights atol=1e-10
+        @test Set(Distributed.procs()) == processes_before
+        @test_throws ArgumentError unfold_bandstructure(
+            pc.lattice, sc, path, 2; unfold_processes=-1)
+        @test_throws ArgumentError unfold_bandstructure(
+            pc.lattice, sc, path, 2; unfold_batches_per_process=0)
 
         Kpoints = [[0.07, 0.11, 0.0], [0.21, 0.09, 0.0], [0.31, 0.27, 0.0]]
         serial_bands = solve_bands(sc, Kpoints; parallel=false)
