@@ -254,10 +254,15 @@ sequência de cálculos, `keep_processes=true` evita pagar novamente sua
 inicialização.
 
 `unfold_batches_per_process=16` é o padrão. Valores maiores criam blocos
-menores e reduzem a cauda em que poucos workers ainda têm trabalho. Como o
-modelo fica em cache nos workers e cada ponto é computacionalmente pesado,
-valores entre 16 e 32 costumam ser adequados para estruturas grandes.
-Valores menores reduzem o número de chamadas remotas.
+menores e reduzem a cauda em que poucos workers ainda têm trabalho. Cada
+bloco é montado amostrando pontos espalhados por todo o caminho (não uma
+fatia contígua), então nenhum worker fica preso desproporcionalmente a uma
+única região do caminho caso o custo por ponto varie com a posição (por
+exemplo perto de pontos de alta simetria com subespaços degenerados
+maiores). Como o modelo fica em cache nos workers e cada ponto é
+computacionalmente pesado, valores entre 16 e 32 costumam ser adequados
+para estruturas grandes. Valores menores reduzem o número de chamadas
+remotas.
 
 Processos têm custo de inicialização e serialização. Para modelos pequenos,
 threads normalmente continuam mais rápidas. Compare `unfold_processes=0`,

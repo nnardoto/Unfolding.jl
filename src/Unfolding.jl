@@ -275,9 +275,17 @@ function _distributed_band_unfold_results(pcl, ab, sc, Ksc, kpc, spin, tol,
         throw(ArgumentError("unfold_batches_per_process must be at least 1"))
     nk = length(kpc)
     nchunks = min(nk, length(worker_ids) * batches_per_process)
-    chunk_size = cld(nk, nchunks)
-    chunks = [collect(first_index:min(first_index + chunk_size - 1, nk))
-              for first_index in 1:chunk_size:nk]
+    # Cada chunk amostra pontos espalhados por todo o conjunto (índice c,
+    # c+nchunks, c+2*nchunks, ...) em vez de uma fatia contígua do caminho.
+    # Se o custo por ponto varia com a posição no caminho (subespaços
+    # degenerados maiores perto de certos k, por exemplo), um chunk contíguo
+    # inteiro pode cair numa região cara e virar cauda; distribuído dessa
+    # forma, cada chunk carrega uma mistura representativa de todo o
+    # caminho, então nenhum worker fica preso desproporcionalmente a uma
+    # única região cara. A ordem de reconstrução do resultado não depende
+    # disso -- cada chunk devolve os pontos na mesma ordem de `indices`, e
+    # `energies[indices] = ...` remonta pelo índice original.
+    chunks = [collect(c:nchunks:nk) for c in 1:nchunks]
 
     # Cada worker publica aqui o tempo de bandas/unfolding de cada ponto assim
     # que termina. Sem isso, o progresso só seria conhecido ao fim de cada
