@@ -128,18 +128,27 @@ function _unfold_weight_at_k(pcl, ab, sc_lattice, K, S, C, k, tol, point_rng)
 end
 
 """
-Executa um bloco independente de pontos dentro de um worker.
+Resolve as bandas e executa o unfolding de um bloco dentro de um worker.
 
-Cada bloco recebe somente os overlaps e coeficientes dos seus próprios
-pontos. Assim, o conjunto completo de autovetores não é replicado em todos
-os processos.
+Cada ponto é resolvido e desdobrado imediatamente. As matrizes densas de
+overlap e coeficientes permanecem locais ao worker somente durante esse
+ponto; apenas energias e pesos retornam ao processo principal.
 """
-function _distributed_unfold_chunk(pcl, ab, sc_lattice, Ks, Ss, Cs, ks, tol, seeds)
-    length(Ks) == length(Ss) == length(Cs) == length(ks) == length(seeds) ||
-        throw(DimensionMismatch("distributed unfolding chunk size mismatch"))
-    [_unfold_weight_at_k(pcl, ab, sc_lattice, Ks[j], Ss[j], Cs[j], ks[j],
-                         tol, MersenneTwister(seeds[j]))
-     for j in eachindex(ks)]
+function _distributed_band_unfold_chunk(pcl, ab, sc, Ks, ks, spin, tol, seeds)
+    length(Ks) == length(ks) == length(seeds) ||
+        throw(DimensionMismatch("distributed band/unfolding chunk size mismatch"))
+    chunk_energies = Vector{Vector{Float64}}(undef, length(ks))
+    chunk_weights = Vector{Vector{Float64}}(undef, length(ks))
+    for j in eachindex(ks)
+        point_bands = solve_bands(sc, (Ks[j],);
+                                  spin=spin, parallel=false, progress=false)
+        chunk_energies[j] = point_bands.energies[1]
+        chunk_weights[j] = _unfold_weight_at_k(
+            pcl, ab, sc.lattice, Ks[j], point_bands.overlaps[1],
+            point_bands.coefficients[1], ks[j], tol,
+            MersenneTwister(seeds[j]))
+    end
+    return (energies=chunk_energies, weights=chunk_weights)
 end
 
 const _managed_unfold_workers = Set{Int}()
@@ -201,7 +210,8 @@ end
 """
     start_unfold_workers(count::Integer)
 
-Prepara `count` processos para o unfolding e retorna seus identificadores.
+Prepara `count` processos para bandas e unfolding e retorna seus
+identificadores.
 Pode ser chamada diretamente em uma célula de notebook. Workers já presentes
 na sessão são reutilizados; os que faltarem são criados localmente com uma
 thread Julia, BLAS serial e o projeto ativo do notebook.
@@ -249,9 +259,10 @@ function stop_unfold_workers()
     return _remove_unfold_workers(managed)
 end
 
-function _distributed_unfold_weights(pcl, ab, sc_lattice, Ksc, bands, kpc,
-                                     tol, point_seeds, worker_ids,
-                                     batches_per_process, report_progress)
+function _distributed_band_unfold_results(pcl, ab, sc, Ksc, kpc, spin, tol,
+                                          point_seeds, worker_ids,
+                                          batches_per_process,
+                                          report_bands, report_unfolding)
     batches_per_process >= 1 ||
         throw(ArgumentError("unfold_batches_per_process must be at least 1"))
     nk = length(kpc)
@@ -260,39 +271,42 @@ function _distributed_unfold_weights(pcl, ab, sc_lattice, Ksc, bands, kpc,
     chunks = [collect(first_index:min(first_index + chunk_size - 1, nk))
               for first_index in 1:chunk_size:nk]
 
-    pool = WorkerPool(worker_ids)
-    chunk_results = asyncmap(chunks; ntasks=min(length(worker_ids), length(chunks))) do indices
-        worker = take!(pool)
-        try
-            result = remotecall_fetch(
-                _distributed_unfold_chunk, worker,
-                pcl, ab, sc_lattice,
-                Ksc[indices],
-                bands.overlaps[indices],
-                bands.coefficients[indices],
-                kpc[indices],
-                tol,
-                point_seeds[indices],
-            )
-            foreach(_ -> report_progress(), indices)
+    # O CachingPool envia este fechamento (e portanto o modelo esparso) uma
+    # única vez a cada worker. Chamadas seguintes transmitem apenas os índices
+    # do bloco, evitando reenviar `sc` ou matrizes densas a cada lote.
+    pool = CachingPool(worker_ids)
+    process_chunk = indices -> _distributed_band_unfold_chunk(
+        pcl, ab, sc, Ksc[indices], kpc[indices], spin, tol,
+        point_seeds[indices])
+    chunk_results = try
+        asyncmap(chunks; ntasks=min(length(worker_ids), length(chunks))) do indices
+            result = remotecall_fetch(process_chunk, pool, indices)
+            for _ in indices
+                report_bands()
+                report_unfolding()
+            end
             return result
-        finally
-            put!(pool, worker)
         end
+    finally
+        # Libera a cópia do fechamento/modelo quando workers persistentes são
+        # mantidos para chamadas futuras.
+        clear!(pool)
     end
 
+    energies = Vector{Vector{Float64}}(undef, nk)
     weights = Vector{Vector{Float64}}(undef, nk)
     for (indices, results) in zip(chunks, chunk_results)
-        weights[indices] = results
+        energies[indices] = results.energies
+        weights[indices] = results.weights
     end
-    return weights
+    return energies, weights
 end
 
 """
     unfold_bandstructure(pc_lattice, sc::RealSpaceModel, path, n_per_segment;
                         tick_labels=nothing, spin=1, tol=1e-5,
                         rng=Random.default_rng(), parallel=Threads.nthreads() > 1,
-                        unfold_processes=0, unfold_batches_per_process=4,
+                        unfold_processes=0, unfold_batches_per_process=16,
                         keep_processes=false, progress=false)
 
 Camada de conveniência para o caso de uso mais comum: dada a rede da célula
@@ -315,20 +329,24 @@ Lança um erro cedo se `sc.lattice` não for um múltiplo inteiro de
 `pc_lattice`, em vez de deixar o mapeamento atômico falhar mais adiante com
 uma mensagem menos direta.
 
-Com `parallel=true`, a solução das bandas usa threads Julia. O unfolding
-também usa threads quando `unfold_processes=0`.
+Com `parallel=true` e `unfold_processes=0`, a solução das bandas e o
+unfolding usam threads Julia.
 
-Defina `unfold_processes=N`, com `N > 0`, para executar a etapa de unfolding
-em `N` processos independentes. Workers existentes são reutilizados e os que
-faltarem são criados automaticamente com uma thread e BLAS não paralelizado.
+Defina `unfold_processes=N`, com `N > 0`, para resolver as bandas e executar
+o unfolding em `N` processos independentes. Cada worker resolve e desdobra
+um ponto antes de receber o próximo bloco, sem devolver as matrizes densas
+intermediárias ao processo principal. Workers existentes são reutilizados e
+os que faltarem são criados automaticamente com uma thread e BLAS não
+paralelizado. Nesse modo, `parallel` não altera o trabalho interno de cada
+worker.
 Por padrão, somente os workers criados por esta chamada são encerrados ao
 final. Use `keep_processes=true` para mantê-los e amortizar a inicialização
 em chamadas posteriores.
 
 `unfold_batches_per_process` controla quantos blocos de trabalho são criados
 por processo. Valores maiores balanceiam melhor pontos de custo desigual,
-mas aumentam a comunicação. Cada ponto e suas matrizes são enviados a apenas
-um worker, independentemente do número de processos.
+mas aumentam o número de chamadas remotas. O modelo fica em cache e as
+matrizes densas intermediárias permanecem no worker responsável pelo ponto.
 
 A ordem do caminho e a reprodutibilidade para um `rng` explícito são
 preservadas em todos os modos.
@@ -347,7 +365,7 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
                               rng::AbstractRNG=Random.default_rng(),
                               parallel::Bool=Threads.nthreads() > 1,
                               unfold_processes::Int=0,
-                              unfold_batches_per_process::Int=4,
+                              unfold_batches_per_process::Int=16,
                               keep_processes::Bool=false,
                               progress::Bool=false,
                               progress_io::IO=stderr)
@@ -372,57 +390,67 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
     energies = zeros(Float64, nb, nk)
     weights = zeros(Float64, nb, nk)
     Ksc = [mod.(transform' * k .+ 0.5, 1.0) .- 0.5 for k in kpc]
-    bands = solve_bands(sc, Ksc; spin=spin, parallel=parallel,
-                        progress=progress, progress_io=progress_io)
-    report_progress = _progress_reporter("Unfolding", nk, progress && nk > 0, progress_io)
-
-    function store_unfolded_point!(i, point_rng)
-        k = kpc[i]
-        point_weights = _unfold_weight_at_k(
-            pcl, ab, sc.lattice, Ksc[i], bands.overlaps[i],
-            bands.coefficients[i], k, tol, point_rng)
-        kpoints_frac[:, i] = k
-        energies[:, i] = bands.energies[i]
-        weights[:, i] = point_weights
-        report_progress()
-        return nothing
-    end
 
     if unfold_processes > 0 && nk > 1
+        report_bands = _progress_reporter("Bandas", nk, progress, progress_io)
+        report_unfolding = _progress_reporter("Unfolding", nk, progress, progress_io)
         # As sementes são definidas no processo principal, em ordem, para que
         # o resultado não dependa da ordem em que workers terminam os blocos.
         point_seeds = [rand(rng, UInt64) for _ in 1:nk]
         requested_processes = min(unfold_processes, nk)
         progress && println(progress_io, "Processos: preparando ",
-                            requested_processes, " worker(s) para o unfolding")
+                            requested_processes,
+                            " worker(s) para bandas + unfolding")
+        progress && flush(progress_io)
         worker_ids, created_workers = _unfold_worker_processes(requested_processes)
         progress && println(progress_io, "Processos: ", length(worker_ids),
                             " worker(s) pronto(s), ", length(created_workers),
                             " criado(s) nesta chamada")
+        progress && flush(progress_io)
         try
-            process_weights = _distributed_unfold_weights(
-                pcl, ab, sc.lattice, Ksc, bands, kpc, tol, point_seeds,
-                worker_ids, unfold_batches_per_process, report_progress)
+            process_energies, process_weights = _distributed_band_unfold_results(
+                pcl, ab, sc, Ksc, kpc, spin, tol, point_seeds,
+                worker_ids, unfold_batches_per_process,
+                report_bands, report_unfolding)
             for i in eachindex(kpc)
                 kpoints_frac[:, i] = kpc[i]
-                energies[:, i] = bands.energies[i]
+                energies[:, i] = process_energies[i]
                 weights[:, i] = process_weights[i]
             end
         finally
             (!keep_processes && !isempty(created_workers)) &&
                 _remove_unfold_workers(created_workers)
         end
-    elseif parallel && nk > 1
-        # Um RNG separado por ponto evita compartilhar estado mutável entre
-        # threads. As sementes são geradas em ordem, antes do trabalho
-        # paralelo, mantendo a execução reprodutível para um `rng` explícito.
-        point_rngs = [MersenneTwister(rand(rng, UInt64)) for _ in 1:nk]
-        Threads.@threads :dynamic for i in eachindex(kpc)
-            store_unfolded_point!(i, point_rngs[i])
-        end
     else
-        for i in eachindex(kpc)
-            store_unfolded_point!(i, rng)
+        bands = solve_bands(sc, Ksc; spin=spin, parallel=parallel,
+                            progress=progress, progress_io=progress_io)
+        report_unfolding = _progress_reporter(
+            "Unfolding", nk, progress && nk > 0, progress_io)
+
+        function store_unfolded_point!(i, point_rng)
+            k = kpc[i]
+            point_weights = _unfold_weight_at_k(
+                pcl, ab, sc.lattice, Ksc[i], bands.overlaps[i],
+                bands.coefficients[i], k, tol, point_rng)
+            kpoints_frac[:, i] = k
+            energies[:, i] = bands.energies[i]
+            weights[:, i] = point_weights
+            report_unfolding()
+            return nothing
+        end
+
+        if parallel && nk > 1
+            # Um RNG separado por ponto evita compartilhar estado mutável entre
+            # threads. As sementes são geradas em ordem, antes do trabalho
+            # paralelo, mantendo a execução reprodutível para um `rng` explícito.
+            point_rngs = [MersenneTwister(rand(rng, UInt64)) for _ in 1:nk]
+            Threads.@threads :dynamic for i in eachindex(kpc)
+                store_unfolded_point!(i, point_rngs[i])
+            end
+        else
+            for i in eachindex(kpc)
+                store_unfolded_point!(i, rng)
+            end
         end
     end
 

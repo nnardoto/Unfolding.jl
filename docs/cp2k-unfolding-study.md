@@ -645,12 +645,12 @@ OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. ...
 Isso usa paralelismo externo sobre pontos `k` e evita que cada ponto crie,
 simultaneamente, outra equipe grande de threads no BLAS.
 
-Com `progress=true`, duas barras mostram separadamente:
+Com `progress=true`, linhas persistentes mostram separadamente:
 
 - solução das bandas;
 - cálculo dos pesos de unfolding.
 
-Quando a etapa de projeção escala pouco com threads, ela pode ser transferida
+Para estruturas grandes, bandas e projeção podem ser transferidas juntas
 para processos Julia independentes:
 
 ```sh
@@ -659,15 +659,14 @@ OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. \
   examples/graphene/cp2k/run_debug 32 4
 ```
 
-O terceiro argumento solicita quatro processos para o unfolding. Na API, a
-mesma configuração é:
+O terceiro argumento solicita quatro processos para bandas e unfolding. Na
+API, a mesma configuração é:
 
 ```julia
 result = unfold_bandstructure(
     M, model, path, 32;
-    parallel=true,
     unfold_processes=4,
-    unfold_batches_per_process=4,
+    unfold_batches_per_process=16,
     progress=true,
 )
 ```
@@ -687,7 +686,7 @@ unfold_worker_status()
 result = unfold_bandstructure(
     M, model, path, 32;
     unfold_processes=12,
-    unfold_batches_per_process=8,
+    unfold_batches_per_process=16,
     progress=true,
 )
 
@@ -703,12 +702,12 @@ notebook não são removidos acidentalmente.
 Processos podem ser acrescentados durante a sessão. Threads Julia, por outro
 lado, são uma propriedade do kernel e não podem ser aumentadas depois de sua
 inicialização. Um kernel com uma thread ainda pode usar o modo multiprocesso
-para o unfolding; apenas a etapa de bandas não terá paralelismo por threads.
+para paralelizar tanto bandas quanto unfolding.
 
-As bandas continuam sendo resolvidas com threads no processo principal.
-Depois, os pontos são separados em blocos; cada overlap e conjunto de
-coeficientes é enviado a apenas um worker. Isso evita copiar o caminho
-completo para todos os processos.
+No modo multiprocesso, cada worker resolve as bandas de um ponto e executa
+seu unfolding imediatamente. Overlap e coeficientes densos não retornam ao
+processo principal; somente energias e pesos são reunidos no final. O modelo
+esparso fica em cache uma vez por worker durante a chamada.
 
 Workers que já existem são reutilizados. Se faltarem, a função cria workers
 locais com uma thread e BLAS serial. Os workers temporários são removidos ao
@@ -723,8 +722,10 @@ Para um cálculo real:
 2. compare `unfold_processes=0`, `2`, `4`, ...;
 3. mantenha uma thread BLAS por processo;
 4. use `keep_processes=true` ao repetir vários caminhos;
-5. acompanhe também a memória, pois cada worker mantém o bloco que está
-   processando.
+5. use `unfold_batches_per_process=16` ou `32` para manter mais blocos na
+   fila e reduzir a cauda com workers ociosos;
+6. acompanhe também a memória, pois cada worker mantém as matrizes densas do
+   ponto que está processando.
 
 ### 10.4 Arquivos produzidos
 

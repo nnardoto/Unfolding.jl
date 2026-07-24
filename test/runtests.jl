@@ -259,8 +259,10 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
             unfold_batches_per_process=2, progress=true,
             progress_io=distributed_progress)
         distributed_progress_text = String(take!(distributed_progress))
+        distributed_progress_lines = split(chomp(distributed_progress_text), '\n')
         @test occursin("Processos: preparando 2 worker(s)", distributed_progress_text)
-        @test occursin("Unfolding", distributed_progress_text)
+        @test count(startswith("Bandas: "), distributed_progress_lines) == length(path) + 1
+        @test count(startswith("Unfolding: "), distributed_progress_lines) == length(path) + 1
         @test distributed.kpoints_frac == threaded.kpoints_frac
         @test distributed.distance == threaded.distance
         @test distributed.energies ≈ threaded.energies
@@ -296,9 +298,13 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
             rng=MersenneTwister(7), parallel=true, progress=true,
             progress_io=progress_output)
         progress_text = String(take!(progress_output))
-        @test occursin("Bandas", progress_text)
-        @test occursin("Unfolding", progress_text)
-        @test count(contains("100%"), split(progress_text, '\r')) == 2
+        progress_lines = split(chomp(progress_text), '\n')
+        @test count(startswith("Bandas: "), progress_lines) == length(path) + 1
+        @test count(startswith("Unfolding: "), progress_lines) == length(path) + 1
+        @test "Bandas: 0 / $(length(path))" in progress_lines
+        @test "Unfolding: 0 / $(length(path))" in progress_lines
+        @test "Bandas: $(length(path)) / $(length(path))" in progress_lines
+        @test "Unfolding: $(length(path)) / $(length(path))" in progress_lines
         @test progress_result.energies ≈ serial.energies
 
         # unfold_bandstructure(M, sc, ...) must reproduce exactly the

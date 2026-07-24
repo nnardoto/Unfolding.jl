@@ -159,12 +159,18 @@ OPENBLAS_NUM_THREADS=1 julia --threads=auto --project=. seu_script.jl
 A ordem dos pontos no resultado é a mesma do caminho de entrada. Para forçar
 o comportamento serial, use `parallel=false` em qualquer uma das duas
 funções. `Threads.nthreads()` mostra quantas threads Julia estão disponíveis.
-Com `progress=true`, a execução mostra separadamente o avanço da solução das
-bandas e do unfolding, incluindo percentual e número de pontos concluídos:
+Com `progress=true`, a execução registra cada ponto concluído em uma linha
+própria. A saída é descarregada imediatamente, portanto também pode ser
+acompanhada em tempo real por um arquivo de texto externo:
 
 ```text
-Bandas    [████████████████████████] 100% (157/157)
-Unfolding [████████████████████████] 100% (157/157)
+Bandas: 0 / 157
+Bandas: 1 / 157
+Bandas: 2 / 157
+...
+Unfolding: 0 / 157
+Unfolding: 1 / 157
+Unfolding: 2 / 157
 ```
 
 #### Controle diretamente em um notebook
@@ -225,20 +231,26 @@ result = unfold_bandstructure(
     sc,
     path,
     40;
-    parallel=true,             # bandas entre threads
-    unfold_processes=4,        # unfolding em quatro processos
+    unfold_processes=4,        # bandas e unfolding em quatro processos
+    unfold_batches_per_process=16,
     progress=true,
 )
 ```
 
-`unfold_processes=0` mantém o modo por threads. Um valor positivo reutiliza
-workers já presentes e cria os que faltarem com uma thread e BLAS serial.
-Os workers criados pela chamada são encerrados ao final. Em uma sequência de
-cálculos, `keep_processes=true` evita pagar novamente sua inicialização.
+`unfold_processes=0` mantém o modo por threads. Um valor positivo distribui
+entre os workers tanto a solução das bandas quanto o unfolding. Cada worker
+resolve e desdobra seus pontos localmente e devolve apenas energias e pesos,
+reduzindo a transferência e a retenção de matrizes densas. Workers já
+presentes são reutilizados; os que faltarem são criados com uma thread e
+BLAS serial. Os workers criados pela chamada são encerrados ao final. Em uma
+sequência de cálculos, `keep_processes=true` evita pagar novamente sua
+inicialização.
 
-`unfold_batches_per_process=4` é o padrão. Aumente-o se os pontos tiverem
-custos muito diferentes; diminua-o para reduzir comunicação. Os dados de
-cada ponto são enviados a somente um processo, em blocos.
+`unfold_batches_per_process=16` é o padrão. Valores maiores criam blocos
+menores e reduzem a cauda em que poucos workers ainda têm trabalho. Como o
+modelo fica em cache nos workers e cada ponto é computacionalmente pesado,
+valores entre 16 e 32 costumam ser adequados para estruturas grandes.
+Valores menores reduzem o número de chamadas remotas.
 
 Processos têm custo de inicialização e serialização. Para modelos pequenos,
 threads normalmente continuam mais rápidas. Compare `unfold_processes=0`,

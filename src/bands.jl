@@ -14,27 +14,27 @@ struct BandData
     energy_unit::String
 end
 
-"""Cria um atualizador de progresso seguro para chamadas concorrentes."""
+"""
+Cria um atualizador de progresso seguro para chamadas concorrentes.
+
+Cada atualização ocupa uma linha própria e é descarregada imediatamente no
+`io`, permitindo acompanhar a execução com ferramentas como `tail -f`.
+"""
 function _progress_reporter(label::AbstractString, total::Integer, enabled::Bool, io::IO)
     completed = Ref(0)
-    last_percent = Ref(-1)
     output_lock = ReentrantLock()
+
+    if enabled
+        println(io, label, ": 0 / ", total)
+        flush(io)
+    end
 
     function report()
         enabled || return nothing
         lock(output_lock) do
             completed[] += 1
-            percent = total == 0 ? 100 : floor(Int, 100 * completed[] / total)
-            if percent > last_percent[]
-                width = 24
-                filled = floor(Int, width * completed[] / total)
-                bar = repeat("█", filled) * repeat("░", width - filled)
-                print(io, '\r', label, " [", bar, "] ", lpad(percent, 3), "% (",
-                      completed[], '/', total, ')')
-                flush(io)
-                last_percent[] = percent
-            end
-            completed[] == total && println(io)
+            println(io, label, ": ", completed[], " / ", total)
+            flush(io)
         end
         return nothing
     end
