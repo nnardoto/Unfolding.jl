@@ -672,6 +672,39 @@ result = unfold_bandstructure(
 )
 ```
 
+Em notebooks, o ciclo de vida pode ser controlado inteiramente por células:
+
+```julia
+using Unfolding
+using LinearAlgebra
+
+# Célula de configuração
+BLAS.set_num_threads(1)
+start_unfold_workers(12)
+unfold_worker_status()
+
+# Célula de cálculo
+result = unfold_bandstructure(
+    M, model, path, 32;
+    unfold_processes=12,
+    unfold_batches_per_process=8,
+    progress=true,
+)
+
+# Célula de encerramento, quando desejado
+stop_unfold_workers()
+```
+
+`start_unfold_workers` reutiliza processos existentes e cria apenas os que
+faltam. `stop_unfold_workers` encerra somente os processos criados e
+registrados pelo pacote. Assim, workers pertencentes a outro cálculo do
+notebook não são removidos acidentalmente.
+
+Processos podem ser acrescentados durante a sessão. Threads Julia, por outro
+lado, são uma propriedade do kernel e não podem ser aumentadas depois de sua
+inicialização. Um kernel com uma thread ainda pode usar o modo multiprocesso
+para o unfolding; apenas a etapa de bandas não terá paralelismo por threads.
+
 As bandas continuam sendo resolvidas com threads no processo principal.
 Depois, os pontos são separados em blocos; cada overlap e conjunto de
 coeficientes é enviado a apenas um worker. Isso evita copiar o caminho

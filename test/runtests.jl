@@ -271,6 +271,19 @@ include(joinpath(@__DIR__,"..","examples","graphene","graphene_models.jl"))
         @test_throws ArgumentError unfold_bandstructure(
             pc.lattice, sc, path, 2; unfold_batches_per_process=0)
 
+        notebook_processes_before = Set(Distributed.procs())
+        notebook_workers = start_unfold_workers(1)
+        notebook_status = unfold_worker_status()
+        @test length(notebook_workers) == 1
+        @test notebook_workers[1] in notebook_status.available_workers
+        @test notebook_workers[1] in notebook_status.managed_workers
+        @test notebook_status.julia_threads == Threads.nthreads()
+        notebook_result = unfold_bandstructure(pc.lattice, sc, path, 2;
+            rng=MersenneTwister(7), unfold_processes=1)
+        @test notebook_result.weights ≈ threaded.weights atol=1e-10
+        @test stop_unfold_workers() == notebook_workers
+        @test Set(Distributed.procs()) == notebook_processes_before
+
         Kpoints = [[0.07, 0.11, 0.0], [0.21, 0.09, 0.0], [0.31, 0.27, 0.0]]
         serial_bands = solve_bands(sc, Kpoints; parallel=false)
         threaded_bands = solve_bands(sc, Kpoints; parallel=true)

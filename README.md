@@ -167,6 +167,55 @@ Bandas    [███████████████████████
 Unfolding [████████████████████████] 100% (157/157)
 ```
 
+#### Controle diretamente em um notebook
+
+Não é necessário iniciar Julia com `-p` nem executar comandos de terminal.
+Em uma célula de configuração:
+
+```julia
+using Unfolding
+using LinearAlgebra
+
+BLAS.set_num_threads(1)
+start_unfold_workers(12)
+unfold_worker_status()
+```
+
+A última expressão produz no próprio notebook algo como:
+
+```text
+(julia_threads = 16,
+ blas_threads = 1,
+ available_workers = [2, 3, ..., 13],
+ managed_workers = [2, 3, ..., 13])
+```
+
+Em outra célula, reutilize esses processos:
+
+```julia
+result = unfold_bandstructure(
+    M, sc, path, 40;
+    parallel=true,
+    unfold_processes=12,
+    unfold_batches_per_process=8,
+    progress=true,
+)
+```
+
+Quando não precisar mais deles:
+
+```julia
+stop_unfold_workers()
+```
+
+Somente os workers criados pelo `Unfolding.jl` são encerrados. Processos que
+já pertenciam ao notebook ou a outro pacote são preservados.
+
+O número de **processos** pode ser alterado durante a sessão. O número de
+**threads Julia** do kernel não pode ser aumentado depois que ele iniciou;
+`unfold_worker_status()` permite conferir esse valor. Mesmo em um kernel com
+uma única thread, o unfolding multiprocesso continua disponível.
+
 Para estruturas maiores, a projeção de unfolding pode escalar melhor em
 processos Julia independentes:
 

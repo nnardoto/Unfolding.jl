@@ -39,6 +39,7 @@ export hermitian_sqrt, lowdin_transform, unfold_weights, check_sum_rule_over_k
 export spectral_function, write_unfolded_hdf5, read_unfolded_hdf5, unfold_supercell
 export CP2KFiles, read_cp2k_csr, convert_cp2k_to_hdf5
 export UnfoldedBandStructure, unfold_bandstructure
+export start_unfold_workers, stop_unfold_workers, unfold_worker_status
 
 """
     unfold_supercell(pc_lattice, ab, sc_lattice, Kfrac, S, C; tol=1e-5, rng)
@@ -141,6 +142,30 @@ function _distributed_unfold_chunk(pcl, ab, sc_lattice, Ks, Ss, Cs, ks, tol, see
      for j in eachindex(ks)]
 end
 
+const _managed_unfold_workers = Set{Int}()
+const _managed_unfold_workers_lock = ReentrantLock()
+
+function _register_unfold_workers(worker_ids)
+    lock(_managed_unfold_workers_lock) do
+        union!(_managed_unfold_workers, worker_ids)
+    end
+    return worker_ids
+end
+
+function _forget_unfold_workers(worker_ids)
+    lock(_managed_unfold_workers_lock) do
+        setdiff!(_managed_unfold_workers, worker_ids)
+    end
+    return worker_ids
+end
+
+function _remove_unfold_workers(worker_ids)
+    active = intersect(collect(worker_ids), procs())
+    isempty(active) || rmprocs(active)
+    _forget_unfold_workers(worker_ids)
+    return active
+end
+
 function _unfold_worker_processes(requested::Int)
     requested >= 0 ||
         throw(ArgumentError("unfold_processes must be nonnegative"))
@@ -157,6 +182,7 @@ function _unfold_worker_processes(requested::Int)
                            dir=pwd(),
                            exeflags=worker_flags,
                            enable_threaded_blas=false)
+        _register_unfold_workers(created)
         append!(available, created)
     end
 
@@ -166,10 +192,61 @@ function _unfold_worker_processes(requested::Int)
         # carregar o pacote antes de desserializar suas funções internas.
         Distributed.remotecall_eval(Main, selected, :(using Unfolding))
     catch
-        isempty(created) || rmprocs(created)
+        isempty(created) || _remove_unfold_workers(created)
         rethrow()
     end
     return selected, created
+end
+
+"""
+    start_unfold_workers(count::Integer)
+
+Prepara `count` processos para o unfolding e retorna seus identificadores.
+Pode ser chamada diretamente em uma célula de notebook. Workers já presentes
+na sessão são reutilizados; os que faltarem são criados localmente com uma
+thread Julia, BLAS serial e o projeto ativo do notebook.
+
+Os workers criados por esta função permanecem vivos para chamadas seguintes
+de `unfold_bandstructure(...; unfold_processes=count)`. Encerre somente os
+workers gerenciados pelo pacote com [`stop_unfold_workers`](@ref).
+"""
+function start_unfold_workers(count::Integer)
+    worker_ids, _ = _unfold_worker_processes(Int(count))
+    return worker_ids
+end
+
+"""
+    unfold_worker_status()
+
+Retorna um `NamedTuple` adequado para exibição em notebooks com o número de
+threads e threads BLAS do kernel principal, os workers disponíveis e o
+subconjunto criado e gerenciado pelo `Unfolding.jl`.
+"""
+function unfold_worker_status()
+    active = filter(!=(myid()), workers())
+    managed = lock(_managed_unfold_workers_lock) do
+        sort!(collect(intersect(_managed_unfold_workers, Set(active))))
+    end
+    return (
+        julia_threads=Threads.nthreads(),
+        blas_threads=LinearAlgebra.BLAS.get_num_threads(),
+        available_workers=active,
+        managed_workers=managed,
+    )
+end
+
+"""
+    stop_unfold_workers()
+
+Encerra os workers locais criados pelo `Unfolding.jl` e retorna seus
+identificadores. Workers que já pertenciam ao notebook, a outro pacote ou a
+um cluster não são removidos.
+"""
+function stop_unfold_workers()
+    managed = lock(_managed_unfold_workers_lock) do
+        collect(_managed_unfold_workers)
+    end
+    return _remove_unfold_workers(managed)
 end
 
 function _distributed_unfold_weights(pcl, ab, sc_lattice, Ksc, bands, kpc,
@@ -333,7 +410,7 @@ function unfold_bandstructure(pc_lattice::AbstractMatrix{<:Real},
             end
         finally
             (!keep_processes && !isempty(created_workers)) &&
-                rmprocs(created_workers)
+                _remove_unfold_workers(created_workers)
         end
     elseif parallel && nk > 1
         # Um RNG separado por ponto evita compartilhar estado mutável entre
